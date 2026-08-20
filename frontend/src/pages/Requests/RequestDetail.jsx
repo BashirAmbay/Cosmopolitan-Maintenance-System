@@ -299,7 +299,7 @@ export const RequestDetail = () => {
               {attachments.map((att) => (
                 <a
                   key={att.id}
-                  href={att.file_path}
+                  href={att.file_path?.startsWith('http') ? att.file_path : `${(import.meta.env.VITE_API_URL || '').replace(/\/api\/?$/, '')}${att.file_path}`}
                   target="_blank"
                   rel="noreferrer"
                   className="p-3 rounded-xl bg-slate-50 border border-slate-200 hover:border-blue-900 flex flex-col items-center text-center space-y-2 group transition-all"
