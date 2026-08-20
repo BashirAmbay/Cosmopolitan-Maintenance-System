@@ -1,20 +1,20 @@
-import db from '../config/database.js';
+import { dbRun } from '../config/database.js';
 
-export function logAudit({ userId, action, entityType, entityId, details, ipAddress }) {
+export async function logAudit({ userId, action, entityType, entityId, details, ipAddress }) {
   try {
-    const stmt = db.prepare(`
-      INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details, ip_address)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      userId || null,
-      action,
-      entityType,
-      entityId || null,
-      typeof details === 'object' ? JSON.stringify(details) : details,
-      ipAddress || '127.0.0.1'
+    await dbRun(
+      `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        userId || null,
+        action,
+        entityType,
+        entityId || null,
+        typeof details === 'object' ? JSON.stringify(details) : details,
+        ipAddress || '127.0.0.1'
+      ]
     );
   } catch (err) {
+    // Non-critical — audit log failure must not break the request
     console.error('Audit log failed:', err.message);
   }
 }

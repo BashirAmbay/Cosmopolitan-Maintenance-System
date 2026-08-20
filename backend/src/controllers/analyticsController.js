@@ -1,135 +1,74 @@
-import db from '../config/database.js';
+import { dbAll, dbGet } from '../config/database.js';
 
-export function getDashboardAnalytics(req, res) {
+export async function getDashboardAnalytics(req, res) {
   try {
-    let totalCount = 0, pendingCount = 0, activeCount = 0, resolvedCount = 0, overdueCount = 0, highPriorityCount = 0;
+    const totalObj = await dbGet('SELECT COUNT(*) as count FROM maintenance_requests', []);
+    const pendingObj = await dbGet("SELECT COUNT(*) as count FROM maintenance_requests WHERE status = 'pending'", []);
+    const activeObj = await dbGet("SELECT COUNT(*) as count FROM maintenance_requests WHERE status IN ('assigned', 'in_progress')", []);
+    const resolvedObj = await dbGet("SELECT COUNT(*) as count FROM maintenance_requests WHERE status IN ('resolved', 'closed')", []);
+    const overdueObj = await dbGet("SELECT COUNT(*) as count FROM maintenance_requests WHERE status NOT IN ('resolved', 'closed') AND due_date IS NOT NULL AND due_date < datetime('now')", []);
+    const highPriorityObj = await dbGet("SELECT COUNT(*) as count FROM maintenance_requests WHERE priority IN ('high', 'urgent') AND status NOT IN ('resolved', 'closed')", []);
+    const avgResObj = await dbGet(`SELECT AVG((julianday(resolved_at) - julianday(created_at)) * 24) as avg_hours FROM maintenance_requests WHERE resolved_at IS NOT NULL`, []);
 
-    try {
-      const totalObj = db.prepare('SELECT COUNT(*) as count FROM maintenance_requests').get();
-      if (totalObj && typeof totalObj.count === 'number') totalCount = totalObj.count;
-    } catch (e) {}
+    const byDepartment = await dbAll(`
+      SELECT d.name as department, COUNT(r.id) as count
+      FROM departments d
+      LEFT JOIN maintenance_requests r ON r.department_id = d.id
+      GROUP BY d.id
+      ORDER BY count DESC
+    `, []);
 
-    try {
-      const pendingObj = db.prepare("SELECT COUNT(*) as count FROM maintenance_requests WHERE status = 'pending'").get();
-      if (pendingObj && typeof pendingObj.count === 'number') pendingCount = pendingObj.count;
-    } catch (e) {}
+    const byLocation = await dbAll(`
+      SELECT l.name as location, l.building, COUNT(r.id) as count
+      FROM locations l
+      LEFT JOIN maintenance_requests r ON r.location_id = l.id
+      GROUP BY l.id
+      ORDER BY count DESC
+      LIMIT 8
+    `, []);
 
-    try {
-      const activeObj = db.prepare("SELECT COUNT(*) as count FROM maintenance_requests WHERE status IN ('assigned', 'in_progress')").get();
-      if (activeObj && typeof activeObj.count === 'number') activeCount = activeObj.count;
-    } catch (e) {}
+    const byCategory = await dbAll(`
+      SELECT c.name as category, c.icon, COUNT(r.id) as count
+      FROM categories c
+      LEFT JOIN maintenance_requests r ON r.category_id = c.id
+      GROUP BY c.id
+      ORDER BY count DESC
+    `, []);
 
-    try {
-      const resolvedObj = db.prepare("SELECT COUNT(*) as count FROM maintenance_requests WHERE status IN ('resolved', 'closed')").get();
-      if (resolvedObj && typeof resolvedObj.count === 'number') resolvedCount = resolvedObj.count;
-    } catch (e) {}
+    const byStatus = await dbAll(`
+      SELECT status, COUNT(*) as count FROM maintenance_requests GROUP BY status
+    `, []);
 
-    try {
-      const overdueObj = db.prepare("SELECT COUNT(*) as count FROM maintenance_requests WHERE status NOT IN ('resolved', 'closed') AND due_date IS NOT NULL AND due_date < datetime('now')").get();
-      if (overdueObj && typeof overdueObj.count === 'number') overdueCount = overdueObj.count;
-    } catch (e) {}
+    const byPriority = await dbAll(`
+      SELECT priority, COUNT(*) as count FROM maintenance_requests GROUP BY priority
+    `, []);
 
-    try {
-      const highPriorityObj = db.prepare("SELECT COUNT(*) as count FROM maintenance_requests WHERE priority IN ('high', 'urgent') AND status NOT IN ('resolved', 'closed')").get();
-      if (highPriorityObj && typeof highPriorityObj.count === 'number') highPriorityCount = highPriorityObj.count;
-    } catch (e) {}
+    const trends = await dbAll(`
+      SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as created_count
+      FROM maintenance_requests
+      GROUP BY date ORDER BY date ASC LIMIT 14
+    `, []);
 
-    let avgResolutionHours = 14.5;
-    try {
-      const avgResObj = db.prepare(`
-        SELECT AVG((julianday(resolved_at) - julianday(created_at)) * 24) as avg_hours 
-        FROM maintenance_requests 
-        WHERE resolved_at IS NOT NULL
-      `).get();
-      if (avgResObj && avgResObj.avg_hours) avgResolutionHours = Math.round(avgResObj.avg_hours * 10) / 10;
-    } catch (e) {}
-
-    let byDepartment = [];
-    try {
-      byDepartment = db.prepare(`
-        SELECT d.name as department, COUNT(r.id) as count
-        FROM departments d
-        LEFT JOIN maintenance_requests r ON r.department_id = d.id
-        GROUP BY d.id
-        ORDER BY count DESC
-      `).all() || [];
-    } catch (e) {}
-
-    let byLocation = [];
-    try {
-      byLocation = db.prepare(`
-        SELECT l.name as location, l.building, COUNT(r.id) as count
-        FROM locations l
-        LEFT JOIN maintenance_requests r ON r.location_id = l.id
-        GROUP BY l.id
-        ORDER BY count DESC
-        LIMIT 8
-      `).all() || [];
-    } catch (e) {}
-
-    let byCategory = [];
-    try {
-      byCategory = db.prepare(`
-        SELECT c.name as category, c.icon, COUNT(r.id) as count
-        FROM categories c
-        LEFT JOIN maintenance_requests r ON r.category_id = c.id
-        GROUP BY c.id
-        ORDER BY count DESC
-      `).all() || [];
-    } catch (e) {}
-
-    let byStatus = [];
-    try {
-      byStatus = db.prepare(`
-        SELECT status, COUNT(*) as count
-        FROM maintenance_requests
-        GROUP BY status
-      `).all() || [];
-    } catch (e) {}
-
-    let byPriority = [];
-    try {
-      byPriority = db.prepare(`
-        SELECT priority, COUNT(*) as count
-        FROM maintenance_requests
-        GROUP BY priority
-      `).all() || [];
-    } catch (e) {}
-
-    let trends = [];
-    try {
-      trends = db.prepare(`
-        SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as created_count
-        FROM maintenance_requests
-        GROUP BY date
-        ORDER BY date ASC
-        LIMIT 14
-      `).all() || [];
-    } catch (e) {}
-
-    let technicianWorkload = [];
-    try {
-      technicianWorkload = db.prepare(`
-        SELECT u.id, u.name, u.specialization,
-               COUNT(CASE WHEN r.status IN ('assigned', 'in_progress') THEN 1 END) as active_tasks,
-               COUNT(CASE WHEN r.status IN ('resolved', 'closed') THEN 1 END) as completed_tasks
-        FROM users u
-        LEFT JOIN maintenance_requests r ON r.assigned_to_id = u.id
-        WHERE u.role = 'technician'
-        GROUP BY u.id
-        ORDER BY active_tasks DESC
-      `).all() || [];
-    } catch (e) {}
+    const technicianWorkload = await dbAll(`
+      SELECT u.id, u.name, u.specialization,
+             COUNT(CASE WHEN r.status IN ('assigned', 'in_progress') THEN 1 END) as active_tasks,
+             COUNT(CASE WHEN r.status IN ('resolved', 'closed') THEN 1 END) as completed_tasks
+      FROM users u
+      LEFT JOIN maintenance_requests r ON r.assigned_to_id = u.id
+      WHERE u.role = 'technician'
+      GROUP BY u.id
+      ORDER BY active_tasks DESC
+    `, []);
 
     return res.json({
       metrics: {
-        totalRequests: totalCount,
-        pendingRequests: pendingCount,
-        activeTasks: activeCount,
-        resolvedIssues: resolvedCount,
-        overdueRequests: overdueCount,
-        highPriority: highPriorityCount,
-        avgResolutionHours
+        totalRequests: totalObj?.count || 0,
+        pendingRequests: pendingObj?.count || 0,
+        activeTasks: activeObj?.count || 0,
+        resolvedIssues: resolvedObj?.count || 0,
+        overdueRequests: overdueObj?.count || 0,
+        highPriority: highPriorityObj?.count || 0,
+        avgResolutionHours: avgResObj?.avg_hours ? Math.round(avgResObj.avg_hours * 10) / 10 : 14.5
       },
       byDepartment,
       byLocation,

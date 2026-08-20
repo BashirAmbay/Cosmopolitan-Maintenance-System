@@ -1,22 +1,17 @@
-import db from '../config/database.js';
+import { dbAll, dbGet, dbRun } from '../config/database.js';
 import { z } from 'zod';
 import { sendNotificationEmail } from '../services/emailService.js';
 import { logAudit } from '../services/auditService.js';
 
-// Generate unique reference number: CUA-YYYYMM-XXXX
-function generateReferenceNumber() {
+async function generateReferenceNumber() {
   const date = new Date();
   const yearStr = date.getFullYear();
   const monthStr = String(date.getMonth() + 1).padStart(2, '0');
-  
   let total = 0;
   try {
-    const countObj = db.prepare('SELECT COUNT(*) as total FROM maintenance_requests').get();
-    if (countObj && typeof countObj.total === 'number') {
-      total = countObj.total;
-    }
+    const countObj = await dbGet('SELECT COUNT(*) as total FROM maintenance_requests', []);
+    if (countObj && typeof countObj.total === 'number') total = countObj.total;
   } catch (e) {}
-  
   const seq = String(total + Math.floor(Math.random() * 900 + 100)).padStart(4, '0');
   return `CUA-${yearStr}${monthStr}-${seq}`;
 }
@@ -41,86 +36,51 @@ export async function createRequest(req, res) {
 
     let slaHours = 24;
     try {
-      const category = db.prepare('SELECT sla_hours, name FROM categories WHERE id = ?').get(category_id);
-      if (category && category.sla_hours) {
-        slaHours = category.sla_hours;
-      }
+      const category = await dbGet('SELECT sla_hours, name FROM categories WHERE id = ?', [category_id]);
+      if (category && category.sla_hours) slaHours = category.sla_hours;
     } catch (e) {}
 
     const dueDate = new Date(Date.now() + slaHours * 3600 * 1000).toISOString();
-    const refNumber = generateReferenceNumber();
+    const refNumber = await generateReferenceNumber();
     const userDeptId = department_id || req.user?.department_id || null;
     const userId = req.user?.id || 1;
 
-    let requestId = Date.now();
-    try {
-      const stmt = db.prepare(`
-        INSERT INTO maintenance_requests 
-        (reference_number, title, description, category_id, location_id, department_id, priority, status, reported_by_id, due_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-      `);
+    const result = await dbRun(
+      `INSERT INTO maintenance_requests 
+       (reference_number, title, description, category_id, location_id, department_id, priority, status, reported_by_id, due_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      [refNumber, title, description, category_id, location_id, userDeptId, priority, userId, dueDate]
+    );
 
-      const result = stmt.run(
-        refNumber, title, description, category_id, location_id, userDeptId, priority, userId, dueDate
-      );
-      if (result && result.lastInsertRowid) {
-        requestId = result.lastInsertRowid;
-      }
-    } catch (dbErr) {
-      console.warn('Request DB insert warning:', dbErr.message);
-    }
+    const requestId = result.lastInsertRowid || Date.now();
 
-    // Handle evidence attachment upload if any
     if (req.file) {
       try {
-        db.prepare(`
-          INSERT INTO attachments (request_id, file_name, file_path, file_type, file_size, attachment_type, uploaded_by_id)
-          VALUES (?, ?, ?, ?, ?, 'evidence', ?)
-        `).run(
-          requestId,
-          req.file.originalname,
-          `/uploads/${req.file.filename}`,
-          req.file.mimetype,
-          req.file.size,
-          userId
+        await dbRun(
+          `INSERT INTO attachments (request_id, file_name, file_path, file_type, file_size, attachment_type, uploaded_by_id) VALUES (?, ?, ?, ?, ?, 'evidence', ?)`,
+          [requestId, req.file.originalname, `/uploads/${req.file.filename}`, req.file.mimetype, req.file.size, userId]
         );
       } catch (e) {}
     }
 
-    // Record initial status history
     try {
-      db.prepare(`
-        INSERT INTO status_history (request_id, old_status, new_status, changed_by_id, remarks)
-        VALUES (?, NULL, 'pending', ?, ?)
-      `).run(requestId, userId, 'Request created and submitted.');
-    } catch (e) {}
-
-    // Record system notification for reporter
-    try {
-      db.prepare(`
-        INSERT INTO notifications (user_id, title, message, link)
-        VALUES (?, ?, ?, ?)
-      `).run(
-        userId,
-        'Request Submitted',
-        `Your maintenance request ${refNumber} has been logged successfully.`,
-        `/requests/${requestId}`
+      await dbRun(
+        `INSERT INTO status_history (request_id, old_status, new_status, changed_by_id, remarks) VALUES (?, NULL, 'pending', ?, ?)`,
+        [requestId, userId, 'Request created and submitted.']
       );
     } catch (e) {}
 
-    // Audit Log
     try {
-      logAudit({
-        userId: userId,
-        action: 'CREATE_REQUEST',
-        entityType: 'REQUEST',
-        entityId: requestId,
-        details: `Created maintenance request ${refNumber}`,
-        ipAddress: req.ip
-      });
+      await dbRun(
+        `INSERT INTO notifications (user_id, title, message, link) VALUES (?, ?, ?, ?)`,
+        [userId, 'Request Submitted', `Your maintenance request ${refNumber} has been logged successfully.`, `/requests/${requestId}`]
+      );
     } catch (e) {}
 
-    // Dispatch Email Notification (Async)
+    try {
+      logAudit({ userId, action: 'CREATE_REQUEST', entityType: 'REQUEST', entityId: requestId, details: `Created maintenance request ${refNumber}`, ipAddress: req.ip });
+    } catch (e) {}
+
     if (req.user?.email) {
       sendNotificationEmail({
         to: req.user.email,
@@ -144,7 +104,7 @@ export async function createRequest(req, res) {
   }
 }
 
-export function getRequests(req, res) {
+export async function getRequests(req, res) {
   try {
     const {
       search, status, priority, category_id, location_id, department_id,
@@ -183,66 +143,30 @@ export function getRequests(req, res) {
       const term = `%${search}%`;
       params.push(term, term, term);
     }
-
-    if (status) {
-      query += ` AND r.status = ?`;
-      params.push(status);
-    }
-
-    if (priority) {
-      query += ` AND r.priority = ?`;
-      params.push(priority);
-    }
-
-    if (category_id) {
-      query += ` AND r.category_id = ?`;
-      params.push(category_id);
-    }
-
-    if (location_id) {
-      query += ` AND r.location_id = ?`;
-      params.push(location_id);
-    }
-
-    if (department_id) {
-      query += ` AND r.department_id = ?`;
-      params.push(department_id);
-    }
-
-    if (assigned_to_id) {
-      query += ` AND r.assigned_to_id = ?`;
-      params.push(assigned_to_id);
-    }
+    if (status) { query += ` AND r.status = ?`; params.push(status); }
+    if (priority) { query += ` AND r.priority = ?`; params.push(priority); }
+    if (category_id) { query += ` AND r.category_id = ?`; params.push(category_id); }
+    if (location_id) { query += ` AND r.location_id = ?`; params.push(location_id); }
+    if (department_id) { query += ` AND r.department_id = ?`; params.push(department_id); }
+    if (assigned_to_id) { query += ` AND r.assigned_to_id = ?`; params.push(assigned_to_id); }
 
     query += ` ORDER BY r.created_at DESC`;
 
     const parsedLimit = parseInt(limit, 10);
     const parsedPage = parseInt(page, 10);
     const offset = (parsedPage - 1) * parsedLimit;
-
     query += ` LIMIT ? OFFSET ?`;
     params.push(parsedLimit, offset);
 
-    let requests = [];
-    try {
-      requests = db.prepare(query).all(...params);
-    } catch (e) {}
+    const requests = await dbAll(query, params);
 
-    let totalCountObj = null;
-    try {
-      let countQuery = `SELECT COUNT(*) as total FROM maintenance_requests r WHERE 1=1`;
-      const countParams = [];
-      if (req.user?.role === 'student' || req.user?.role === 'staff' || my_requests === 'true') {
-        countQuery += ` AND r.reported_by_id = ?`;
-        countParams.push(req.user.id);
-      } else if (req.user?.role === 'technician' && my_requests === 'true') {
-        countQuery += ` AND r.assigned_to_id = ?`;
-        countParams.push(req.user.id);
-      }
-      if (status) { countQuery += ` AND r.status = ?`; countParams.push(status); }
-
-      totalCountObj = db.prepare(countQuery).get(...countParams);
-    } catch (e) {}
+    let countQuery = `SELECT COUNT(*) as total FROM maintenance_requests r WHERE 1=1`;
+    const countParams = [];
+    if (req.user?.role === 'student' || req.user?.role === 'staff' || my_requests === 'true') {
+      countQuery += ` AND r.reported_by_id = ?`; countParams.push(req.user.id);
+    }
+    if (status) { countQuery += ` AND r.status = ?`; countParams.push(status); }
+    const totalCountObj = await dbGet(countQuery, countParams);
 
     return res.json({
       requests,
@@ -258,85 +182,56 @@ export function getRequests(req, res) {
   }
 }
 
-export function getRequestById(req, res) {
+export async function getRequestById(req, res) {
   try {
     const { id } = req.params;
 
-    let request = null;
-    try {
-      request = db.prepare(`
-        SELECT 
-          r.*,
-          c.name as category_name, c.description as category_desc, c.icon as category_icon, c.sla_hours,
-          l.name as location_name, l.building as location_building, l.floor as location_floor, l.room_number as location_room,
-          d.name as department_name, d.code as department_code,
-          reporter.name as reporter_name, reporter.email as reporter_email, reporter.phone as reporter_phone, reporter.role as reporter_role,
-          tech.name as technician_name, tech.email as technician_email, tech.phone as technician_phone, tech.specialization as technician_spec
-        FROM maintenance_requests r
-        LEFT JOIN categories c ON r.category_id = c.id
-        LEFT JOIN locations l ON r.location_id = l.id
-        LEFT JOIN departments d ON r.department_id = d.id
-        LEFT JOIN users reporter ON r.reported_by_id = reporter.id
-        LEFT JOIN users tech ON r.assigned_to_id = tech.id
-        WHERE r.id = ?
-      `).get(id);
-    } catch (e) {}
+    const request = await dbGet(`
+      SELECT 
+        r.*,
+        c.name as category_name, c.description as category_desc, c.icon as category_icon, c.sla_hours,
+        l.name as location_name, l.building as location_building, l.floor as location_floor, l.room_number as location_room,
+        d.name as department_name, d.code as department_code,
+        reporter.name as reporter_name, reporter.email as reporter_email, reporter.phone as reporter_phone, reporter.role as reporter_role,
+        tech.name as technician_name, tech.email as technician_email, tech.phone as technician_phone, tech.specialization as technician_spec
+      FROM maintenance_requests r
+      LEFT JOIN categories c ON r.category_id = c.id
+      LEFT JOIN locations l ON r.location_id = l.id
+      LEFT JOIN departments d ON r.department_id = d.id
+      LEFT JOIN users reporter ON r.reported_by_id = reporter.id
+      LEFT JOIN users tech ON r.assigned_to_id = tech.id
+      WHERE r.id = ?
+    `, [id]);
 
     if (!request) {
-      request = {
-        id: Number(id) || 1,
-        reference_number: `CUA-202608-${String(id).padStart(4, '0')}`,
-        title: 'Campus Facility Maintenance Issue',
-        description: 'Facility maintenance request under inspection.',
-        status: 'pending',
-        priority: 'medium',
-        category_name: 'General Maintenance',
-        location_name: 'Main Block',
-        department_name: 'Computer Science & IT',
-        reporter_name: req.user?.name || 'Cosmopolitan User',
-        created_at: new Date().toISOString()
-      };
+      return res.status(404).json({ error: 'Maintenance request not found.' });
     }
 
-    let comments = [];
-    try {
-      comments = db.prepare(`
-        SELECT com.*, u.name as user_name, u.role as user_role, u.avatar_url
-        FROM comments com
-        JOIN users u ON com.user_id = u.id
-        WHERE com.request_id = ?
-        ORDER BY com.created_at ASC
-      `).all(id);
-    } catch (e) {}
+    const comments = await dbAll(`
+      SELECT com.*, u.name as user_name, u.role as user_role, u.avatar_url
+      FROM comments com
+      JOIN users u ON com.user_id = u.id
+      WHERE com.request_id = ?
+      ORDER BY com.created_at ASC
+    `, [id]);
 
-    let attachments = [];
-    try {
-      attachments = db.prepare(`
-        SELECT att.*, u.name as uploader_name
-        FROM attachments att
-        JOIN users u ON att.uploaded_by_id = u.id
-        WHERE att.request_id = ?
-        ORDER BY att.created_at ASC
-      `).all(id);
-    } catch (e) {}
+    const attachments = await dbAll(`
+      SELECT att.*, u.name as uploader_name
+      FROM attachments att
+      JOIN users u ON att.uploaded_by_id = u.id
+      WHERE att.request_id = ?
+      ORDER BY att.created_at ASC
+    `, [id]);
 
-    let history = [];
-    try {
-      history = db.prepare(`
-        SELECT sh.*, u.name as changed_by_name, u.role as changed_by_role
-        FROM status_history sh
-        JOIN users u ON sh.changed_by_id = u.id
-        WHERE sh.request_id = ?
-        ORDER BY sh.created_at ASC
-      `).all(id);
-    } catch (e) {}
+    const history = await dbAll(`
+      SELECT sh.*, u.name as changed_by_name, u.role as changed_by_role
+      FROM status_history sh
+      JOIN users u ON sh.changed_by_id = u.id
+      WHERE sh.request_id = ?
+      ORDER BY sh.created_at ASC
+    `, [id]);
 
-    return res.json({
-      request,
-      comments,
-      attachments,
-      history
-    });
+    return res.json({ request, comments, attachments, history });
   } catch (error) {
     console.error('Get request by id error:', error);
     return res.status(500).json({ error: 'Failed to fetch request details.' });
@@ -353,18 +248,19 @@ export async function assignTechnician(req, res) {
     }
 
     const techId = Number(technician_id);
-    let techName = 'Assigned Technician';
-    try {
-      const tech = db.prepare('SELECT id, name FROM users WHERE id = ?').get(techId);
-      if (tech && tech.name) techName = tech.name;
-    } catch (e) {}
+    const tech = await dbGet('SELECT id, name FROM users WHERE id = ?', [techId]);
+    const techName = tech?.name || 'Assigned Technician';
+
+    await dbRun(
+      `UPDATE maintenance_requests SET assigned_to_id = ?, status = 'assigned', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [techId, id]
+    );
 
     try {
-      db.prepare(`
-        UPDATE maintenance_requests 
-        SET assigned_to_id = ?, status = 'assigned', updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(techId, id);
+      await dbRun(
+        `INSERT INTO assignments (request_id, technician_id, assigned_by_id, notes) VALUES (?, ?, ?, ?)`,
+        [id, techId, req.user?.id || 1, notes || 'Assigned from dashboard.']
+      );
     } catch (e) {}
 
     return res.json({ message: 'Technician assigned successfully.', assignedTo: techName });
@@ -384,19 +280,28 @@ export async function updateStatus(req, res) {
       return res.status(400).json({ error: 'Invalid status value provided.' });
     }
 
-    let resolvedAt = status === 'resolved' ? new Date().toISOString() : null;
-    let closedAt = status === 'closed' ? new Date().toISOString() : null;
+    const resolvedAt = status === 'resolved' ? new Date().toISOString() : null;
+    const closedAt = status === 'closed' ? new Date().toISOString() : null;
+
+    await dbRun(
+      `UPDATE maintenance_requests
+       SET status = ?, 
+           resolution_notes = COALESCE(?, resolution_notes),
+           resolved_at = COALESCE(?, resolved_at),
+           closed_at = COALESCE(?, closed_at),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [status, resolution_notes || null, resolvedAt, closedAt, id]
+    );
 
     try {
-      db.prepare(`
-        UPDATE maintenance_requests
-        SET status = ?, 
-            resolution_notes = COALESCE(?, resolution_notes),
-            resolved_at = COALESCE(?, resolved_at),
-            closed_at = COALESCE(?, closed_at),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(status, resolution_notes || null, resolvedAt, closedAt, id);
+      const request = await dbGet('SELECT reported_by_id FROM maintenance_requests WHERE id = ?', [id]);
+      if (request) {
+        await dbRun(
+          `INSERT INTO status_history (request_id, new_status, changed_by_id, remarks) VALUES (?, ?, ?, ?)`,
+          [id, status, req.user?.id || 1, remarks || `Status changed to ${status}`]
+        );
+      }
     } catch (e) {}
 
     return res.json({ message: `Request status updated to ${status}.` });
@@ -406,7 +311,7 @@ export async function updateStatus(req, res) {
   }
 }
 
-export function addComment(req, res) {
+export async function addComment(req, res) {
   try {
     const { id } = req.params;
     const { content } = req.body;
@@ -415,8 +320,13 @@ export function addComment(req, res) {
       return res.status(400).json({ error: 'Comment content cannot be empty.' });
     }
 
+    const result = await dbRun(
+      `INSERT INTO comments (request_id, user_id, content, is_internal) VALUES (?, ?, ?, 0)`,
+      [id, req.user?.id || 1, content.trim()]
+    );
+
     const newComment = {
-      id: Date.now(),
+      id: result.lastInsertRowid || Date.now(),
       request_id: Number(id),
       user_id: req.user?.id || 1,
       user_name: req.user?.name || 'Cosmopolitan User',
@@ -425,20 +335,14 @@ export function addComment(req, res) {
       created_at: new Date().toISOString()
     };
 
-    try {
-      db.prepare(`
-        INSERT INTO comments (request_id, user_id, content, is_internal)
-        VALUES (?, ?, ?, 0)
-      `).run(id, req.user?.id || 1, content.trim());
-    } catch (e) {}
-
     return res.status(201).json({ message: 'Comment posted', comment: newComment });
   } catch (error) {
+    console.error('addComment error:', error);
     return res.status(500).json({ error: 'Failed to post comment.' });
   }
 }
 
-export function rateResolution(req, res) {
+export async function rateResolution(req, res) {
   try {
     const { id } = req.params;
     const { rating, feedback } = req.body;
@@ -447,16 +351,14 @@ export function rateResolution(req, res) {
       return res.status(400).json({ error: 'Rating must be an integer between 1 and 5.' });
     }
 
-    try {
-      db.prepare(`
-        UPDATE maintenance_requests
-        SET user_rating = ?, user_feedback = ?, status = 'closed', closed_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(rating, feedback || null, id);
-    } catch (e) {}
+    await dbRun(
+      `UPDATE maintenance_requests SET user_rating = ?, user_feedback = ?, status = 'closed', closed_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [rating, feedback || null, id]
+    );
 
     return res.json({ message: 'Thank you for your feedback! Request is now closed.' });
   } catch (error) {
+    console.error('rateResolution error:', error);
     return res.status(500).json({ error: 'Failed to submit rating.' });
   }
 }

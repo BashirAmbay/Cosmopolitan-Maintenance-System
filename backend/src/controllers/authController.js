@@ -1,4 +1,4 @@
-import db from '../config/database.js';
+import { dbGet, dbRun } from '../config/database.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
@@ -27,7 +27,6 @@ const completeProfileSchema = z.object({
   specialization: z.string().optional().nullable()
 });
 
-// Helper to validate Cosmopolitan email domain
 function isCosmopolitanEmail(email) {
   if (!email || typeof email !== 'string') return false;
   const clean = email.trim().toLowerCase();
@@ -38,7 +37,6 @@ function isCosmopolitanEmail(email) {
   );
 }
 
-// Helper to generate clean user name from email
 function nameFromEmail(email) {
   const username = email.split('@')[0];
   const parts = username.replace(/[._]/g, ' ').split(' ');
@@ -63,19 +61,13 @@ export async function login(req, res) {
       });
     }
 
-    let user = null;
-    try {
-      user = db.prepare(`
-        SELECT u.*, d.name as department_name 
-        FROM users u 
-        LEFT JOIN departments d ON u.department_id = d.id 
-        WHERE u.email = ?
-      `).get(cleanEmail);
-    } catch (e) {}
+    let user = await dbGet(
+      'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.email = ?',
+      [cleanEmail]
+    );
 
     let requiresSetup = false;
 
-    // Direct SSO Auto-Provisioning for University Emails if user doesn't exist
     if (!user) {
       const defaultName = nameFromEmail(cleanEmail);
       const defaultPasswordHash = await bcrypt.hash(password || 'password123', 10);
@@ -89,43 +81,20 @@ export async function login(req, res) {
         assignedRole = 'technician';
       }
 
-      // Auto-assign department if CS/ICT or default
-      let defaultDept = null;
-      try {
-        defaultDept = db.prepare("SELECT id FROM departments WHERE code = 'CSIT' OR id = 1").get();
-      } catch (e) {}
+      const defaultDept = await dbGet("SELECT id FROM departments WHERE code = 'CSIT' LIMIT 1", []);
 
-      let insertId = Date.now();
-      try {
-        const stmt = db.prepare(`
-          INSERT INTO users (name, email, password_hash, role, department_id, phone, specialization, is_active)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-        `);
+      const result = await dbRun(
+        `INSERT INTO users (name, email, password_hash, role, department_id, phone, specialization, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+        [defaultName, cleanEmail, defaultPasswordHash, assignedRole, defaultDept ? defaultDept.id : null, null, null]
+      );
 
-        const result = stmt.run(
-          defaultName,
-          cleanEmail,
-          defaultPasswordHash,
-          assignedRole,
-          defaultDept ? defaultDept.id : null,
-          null,
-          null
-        );
-        if (result && result.lastInsertRowid) {
-          insertId = result.lastInsertRowid;
-        }
-      } catch (dbErr) {
-        console.warn('Auto-provision DB insert warning:', dbErr.message);
-      }
+      const insertId = result.lastInsertRowid || Date.now();
 
-      try {
-        user = db.prepare(`
-          SELECT u.*, d.name as department_name 
-          FROM users u 
-          LEFT JOIN departments d ON u.department_id = d.id 
-          WHERE u.id = ?
-        `).get(insertId);
-      } catch (e) {}
+      user = await dbGet(
+        'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.id = ?',
+        [insertId]
+      );
 
       if (!user) {
         user = {
@@ -151,7 +120,6 @@ export async function login(req, res) {
         });
       } catch (auditErr) {}
     } else {
-      // Validate password for existing accounts
       if (user.password_hash) {
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
@@ -214,25 +182,16 @@ export async function completeProfile(req, res) {
     const { role, department_id, name, phone, specialization } = parse.data;
     const userId = req.user?.id || 1;
 
-    try {
-      db.prepare(`
-        UPDATE users 
-        SET role = ?, department_id = ?, name = COALESCE(?, name), phone = COALESCE(?, phone), specialization = COALESCE(?, specialization)
-        WHERE id = ?
-      `).run(role, department_id || null, name || null, phone || null, specialization || null, userId);
-    } catch (dbErr) {
-      console.warn('Database update profile warning:', dbErr.message);
-    }
+    await dbRun(
+      `UPDATE users SET role = ?, department_id = ?, name = COALESCE(?, name), phone = COALESCE(?, phone), specialization = COALESCE(?, specialization)
+       WHERE id = ?`,
+      [role, department_id || null, name || null, phone || null, specialization || null, userId]
+    );
 
-    let updatedUser = null;
-    try {
-      updatedUser = db.prepare(`
-        SELECT u.*, d.name as department_name 
-        FROM users u 
-        LEFT JOIN departments d ON u.department_id = d.id 
-        WHERE u.id = ?
-      `).get(userId);
-    } catch (e) {}
+    let updatedUser = await dbGet(
+      'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.id = ?',
+      [userId]
+    );
 
     if (!updatedUser) {
       updatedUser = {
@@ -265,7 +224,7 @@ export async function completeProfile(req, res) {
         action: 'USER_PROFILE_COMPLETED',
         entityType: 'USER',
         entityId: updatedUser.id,
-        details: `User ${updatedUser.email} set role to ${role} and department to ${updatedUser.department_name || department_id}`,
+        details: `User ${updatedUser.email} set role to ${role}`,
         ipAddress: req.ip
       });
     } catch (auditErr) {}
@@ -298,47 +257,32 @@ export async function register(req, res) {
       });
     }
 
-    let existing = null;
-    try {
-      existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
-    } catch (e) {}
+    const existing = await dbGet('SELECT id FROM users WHERE email = ?', [email.toLowerCase()]);
     if (existing) {
       return res.status(400).json({ error: 'User email already exists.' });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    let insertId = Date.now();
-    try {
-      const stmt = db.prepare(`
-        INSERT INTO users (name, email, password_hash, role, department_id, phone, specialization)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
+    const result = await dbRun(
+      `INSERT INTO users (name, email, password_hash, role, department_id, phone, specialization)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name, email.toLowerCase(), passwordHash, role, department_id || null, phone || null, specialization || null]
+    );
 
-      const result = stmt.run(name, email.toLowerCase(), passwordHash, role, department_id || null, phone || null, specialization || null);
-      if (result && result.lastInsertRowid) {
-        insertId = result.lastInsertRowid;
-      }
-    } catch (dbErr) {
-      console.warn('Register DB insert warning:', dbErr.message);
-    }
+    const insertId = result.lastInsertRowid || Date.now();
 
-    let newUser = null;
-    try {
-      newUser = db.prepare(`
-        SELECT u.*, d.name as department_name 
-        FROM users u 
-        LEFT JOIN departments d ON u.department_id = d.id 
-        WHERE u.id = ?
-      `).get(insertId);
-    } catch (e) {}
+    let newUser = await dbGet(
+      'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.id = ?',
+      [insertId]
+    );
 
     if (!newUser) {
       newUser = {
         id: insertId,
         email: email.toLowerCase(),
-        name: name,
-        role: role,
+        name,
+        role,
         department_id: department_id || null,
         phone: phone || null,
         specialization: specialization || null,
@@ -382,17 +326,12 @@ export async function register(req, res) {
   }
 }
 
-export function getCurrentUser(req, res) {
+export async function getCurrentUser(req, res) {
   try {
-    let user = null;
-    try {
-      user = db.prepare(`
-        SELECT u.*, d.name as department_name 
-        FROM users u 
-        LEFT JOIN departments d ON u.department_id = d.id 
-        WHERE u.id = ?
-      `).get(req.user.id);
-    } catch (e) {}
+    let user = await dbGet(
+      'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.id = ?',
+      [req.user.id]
+    );
 
     if (!user) {
       user = {
@@ -432,47 +371,25 @@ export async function resetPassword(req, res) {
       });
     }
 
-    let user = null;
-    try {
-      user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
-    } catch (e) {}
-
+    const user = await dbGet('SELECT * FROM users WHERE email = ?', [cleanEmail]);
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
     if (!user) {
       const defaultName = nameFromEmail(cleanEmail);
-      let defaultDept = null;
+      const defaultDept = await dbGet("SELECT id FROM departments WHERE code = 'CSIT' LIMIT 1", []);
+      const result = await dbRun(
+        `INSERT INTO users (name, email, password_hash, role, department_id, is_active) VALUES (?, ?, ?, 'student', ?, 1)`,
+        [defaultName, cleanEmail, passwordHash, defaultDept ? defaultDept.id : null]
+      );
       try {
-        defaultDept = db.prepare("SELECT id FROM departments WHERE code = 'CSIT' OR id = 1").get();
+        logAudit({ userId: result.lastInsertRowid, action: 'USER_PASSWORD_RESET', entityType: 'USER', entityId: result.lastInsertRowid, details: `Password reset for new user ${cleanEmail}`, ipAddress: req.ip });
       } catch (e) {}
-
-      let insertId = Date.now();
-      try {
-        const stmt = db.prepare(`
-          INSERT INTO users (name, email, password_hash, role, department_id, is_active)
-          VALUES (?, ?, ?, 'student', ?, 1)
-        `);
-        const result = stmt.run(defaultName, cleanEmail, passwordHash, defaultDept ? defaultDept.id : null);
-        if (result && result.lastInsertRowid) insertId = result.lastInsertRowid;
-      } catch (e) {}
-
-      user = { id: insertId, email: cleanEmail };
     } else {
+      await dbRun('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [passwordHash, user.id]);
       try {
-        db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, user.id);
-      } catch (e) {}
+        logAudit({ userId: user.id, action: 'USER_PASSWORD_RESET', entityType: 'USER', entityId: user.id, details: `Password reset successfully for ${cleanEmail}`, ipAddress: req.ip });
+      } catch (auditErr) {}
     }
-
-    try {
-      logAudit({
-        userId: user.id,
-        action: 'USER_PASSWORD_RESET',
-        entityType: 'USER',
-        entityId: user.id,
-        details: `Password reset successfully for ${cleanEmail}`,
-        ipAddress: req.ip
-      });
-    } catch (auditErr) {}
 
     return res.json({ message: 'Password updated successfully! You can now log in with your new password.' });
   } catch (error) {

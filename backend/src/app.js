@@ -12,22 +12,19 @@ import categoryRoutes from './routes/categoryRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import { initDatabaseSchema } from './database/schema.js';
-import { seedDatabase } from './database/seed.js';
-import db from './config/database.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize DB schema & auto-seed if empty on start
-try {
-  initDatabaseSchema();
-  const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get()?.c || 0;
-  if (userCount === 0) {
-    seedDatabase().catch(err => console.warn('Auto-seed warning:', err.message));
+// Initialize DB schema async (works with both local SQLite and Turso Cloud)
+(async () => {
+  try {
+    await initDatabaseSchema();
+  } catch (err) {
+    console.warn('Database schema initialization warning:', err.message);
   }
-} catch (err) {
-  console.warn('Database initialization check warning:', err.message);
-}
+})();
 
 const app = express();
 
