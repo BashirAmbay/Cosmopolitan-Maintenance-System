@@ -24,7 +24,7 @@ export const ProfileSetupModal = () => {
     }
   }, [showSetupModal, user]);
 
-  if (!showSetupModal && user?.department_id) {
+  if (user?.role === 'admin' || user?.role === 'management' || (!showSetupModal && user?.department_id)) {
     return null;
   }
 

@@ -39,8 +39,10 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('cua_token', newToken);
       localStorage.setItem('cua_user', JSON.stringify(userData));
 
-      if (requiresSetup || !userData.department_id) {
+      if ((requiresSetup || !userData.department_id) && userData.role !== 'admin' && userData.role !== 'management') {
         setShowSetupModal(true);
+      } else {
+        setShowSetupModal(false);
       }
       
       toast.success(`Welcome to Cosmopolitan Portal, ${userData.name}!`);
