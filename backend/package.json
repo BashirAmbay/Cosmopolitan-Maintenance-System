@@ -12,6 +12,7 @@
     "vercel-build": "echo 'Vercel backend build ready'"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.8.0",
     "cors": "^2.8.5",
