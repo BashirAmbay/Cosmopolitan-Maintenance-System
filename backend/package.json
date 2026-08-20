@@ -8,6 +8,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node src/database/seed.js",
+    "postinstall": "npm rebuild better-sqlite3",
     "vercel-build": "node src/database/seed.js"
   },
   "dependencies": {
