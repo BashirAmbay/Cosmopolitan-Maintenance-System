@@ -2,6 +2,7 @@ import { createClient } from '@libsql/client';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -170,9 +171,7 @@ async function initTurso() {
 
     console.log('✅ ALL 11 tables successfully created on Turso Cloud Database!');
 
-    // Seed departments, categories, locations
-    console.log('🌱 Seeding initial departments, locations, categories into Turso...');
-
+    // Seed departments
     const depts = [
       ['Computer Science & IT', 'CSIT', 'School of Technology & Computing', 'Dr. Aliyu Bello'],
       ['Estates & Physical Planning', 'ESTATES', 'University Works & Infrastructure', 'Engr. Mustapha K.'],
@@ -190,6 +189,7 @@ async function initTurso() {
       } catch (e) {}
     }
 
+    // Seed locations
     const locs = [
       ['Computer Lab 2', 'Main Academic Block', 'Ground Floor', 'G-14', 'High performance desktop workstation laboratory'],
       ['Main Auditorium', 'Administration Complex', 'Ground Floor', 'AUD-01', 'Central 1,200 capacity university event hall'],
@@ -207,6 +207,7 @@ async function initTurso() {
       } catch (e) {}
     }
 
+    // Seed categories
     const cats = [
       ['Electrical & Power', 'Power outlets, lighting, circuit breakers & generators', 'zap', 6],
       ['Plumbing & Water', 'Pipe leaks, taps, drainage, restrooms & water supply', 'droplet', 12],
@@ -225,9 +226,32 @@ async function initTurso() {
       } catch (e) {}
     }
 
-    console.log('🎉 Turso Cloud Database fully initialized and seeded! Ready for live production!');
+    // Seed System Users (Admin, Management, Technicians)
+    console.log('🔑 Seeding official System Admin, Management & Technician accounts into Turso...');
+
+    const defaultPasswordHash = await bcrypt.hash('password123', 10);
+    const systemUsers = [
+      ['Admin Operations', 'admin@cosmopolitan.edu.ng', defaultPasswordHash, 'admin', 1, '+234 803 111 2233', 'System Administration'],
+      ['Vice Chancellor Management', 'management@cosmopolitan.edu.ng', defaultPasswordHash, 'management', 1, '+234 802 999 8877', 'Executive Operations'],
+      ['HVAC Technician Ibrahim', 'tech.hvac@cosmopolitan.edu.ng', defaultPasswordHash, 'technician', 2, '+234 805 444 3322', 'HVAC Air Conditioning & Cooling'],
+      ['Electrical Technician Kabiru', 'tech.electrical@cosmopolitan.edu.ng', defaultPasswordHash, 'technician', 3, '+234 806 555 4433', 'Electrical Power & Generators'],
+      ['ICT Support Engineer Sani', 'tech.ict@cosmopolitan.edu.ng', defaultPasswordHash, 'technician', 1, '+234 807 666 5544', 'Network Systems & Smartboards']
+    ];
+
+    for (const u of systemUsers) {
+      try {
+        await client.execute({
+          sql: 'INSERT OR REPLACE INTO users (name, email, password_hash, role, department_id, phone, specialization) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          args: u
+        });
+      } catch (e) {
+        console.warn('User insert warning:', e.message);
+      }
+    }
+
+    console.log('🎉 Turso Cloud Database fully seeded with Admin & System Accounts!');
   } catch (err) {
-    console.error('❌ Turso initialization error:', err);
+    console.error('❌ Turso setup error:', err);
   }
 }
 

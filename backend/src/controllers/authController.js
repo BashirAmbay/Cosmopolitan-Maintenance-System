@@ -80,6 +80,15 @@ export async function login(req, res) {
       const defaultName = nameFromEmail(cleanEmail);
       const defaultPasswordHash = await bcrypt.hash(password || 'password123', 10);
 
+      let assignedRole = 'student';
+      if (cleanEmail.startsWith('admin@') || cleanEmail.includes('admin')) {
+        assignedRole = 'admin';
+      } else if (cleanEmail.startsWith('management@') || cleanEmail.startsWith('vc@')) {
+        assignedRole = 'management';
+      } else if (cleanEmail.startsWith('tech.') || cleanEmail.includes('technician')) {
+        assignedRole = 'technician';
+      }
+
       // Auto-assign department if CS/ICT or default
       let defaultDept = null;
       try {
@@ -97,7 +106,7 @@ export async function login(req, res) {
           defaultName,
           cleanEmail,
           defaultPasswordHash,
-          'student', // default initial role until user completes selection modal
+          assignedRole,
           defaultDept ? defaultDept.id : null,
           null,
           null
@@ -123,13 +132,13 @@ export async function login(req, res) {
           id: insertId,
           email: cleanEmail,
           name: defaultName,
-          role: 'student',
+          role: assignedRole,
           department_id: defaultDept ? defaultDept.id : null,
           is_active: 1
         };
       }
 
-      requiresSetup = true;
+      requiresSetup = (assignedRole === 'student' || assignedRole === 'staff');
 
       try {
         logAudit({
