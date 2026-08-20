@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import authRoutes from './routes/authRoutes.js';
 import requestRoutes from './routes/requestRoutes.js';
@@ -35,7 +36,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve uploaded files statically
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+const isVercel = Boolean(process.env.VERCEL || process.env.NOW_BUILDER);
+const staticUploadsDir = isVercel ? path.join('/tmp', 'uploads') : path.join(__dirname, '../uploads');
+try {
+  if (fs.existsSync(staticUploadsDir)) {
+    app.use('/uploads', express.static(staticUploadsDir));
+  }
+} catch (err) {
+  console.warn('Static uploads mount check warning:', err.message);
+}
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
