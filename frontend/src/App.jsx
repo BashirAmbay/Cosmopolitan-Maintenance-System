@@ -7,6 +7,7 @@ import { ProfileSetupModal } from './components/common/ProfileSetupModal';
 
 import { Login } from './pages/Auth/Login';
 import { Register } from './pages/Auth/Register';
+import { ResetPassword } from './pages/Auth/ResetPassword';
 import { Dashboard } from './pages/Dashboard/Dashboard';
 import { NewRequest } from './pages/Requests/NewRequest';
 import { RequestList } from './pages/Requests/RequestList';
@@ -51,6 +52,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       <Route element={<ProtectedLayout />}>
         <Route path="/" element={<Dashboard />} />

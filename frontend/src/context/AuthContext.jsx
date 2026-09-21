@@ -93,9 +93,43 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const resetPassword = async (email, newPassword) => {
+  const forgotPassword = async (email) => {
     try {
-      const res = await api.post('/auth/reset-password', { email, newPassword });
+      const res = await api.post('/auth/forgot-password', { email });
+      toast.success(res.data.message || 'Reset link sent to your email!');
+      return res.data;
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Failed to send password reset link.';
+      toast.error(msg);
+      throw err;
+    }
+  };
+
+  const verifyResetToken = async (token, email) => {
+    try {
+      const res = await api.get('/auth/verify-reset-token', { params: { token, email } });
+      return res.data;
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Password reset link is invalid or expired.';
+      throw new Error(msg);
+    }
+  };
+
+  const confirmPasswordReset = async (token, email, newPassword) => {
+    try {
+      const res = await api.post('/auth/reset-password', { token, email, newPassword });
+      toast.success(res.data.message || 'Password updated successfully!');
+      return res.data;
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Failed to reset password.';
+      toast.error(msg);
+      throw err;
+    }
+  };
+
+  const resetPassword = async (email, newPassword, token = null) => {
+    try {
+      const res = await api.post('/auth/reset-password', { email, newPassword, token });
       toast.success(res.data.message || 'Password updated successfully!');
       return res.data;
     } catch (err) {
@@ -124,7 +158,10 @@ export const AuthProvider = ({ children }) => {
       login, 
       completeProfile, 
       register, 
-      resetPassword,
+      forgotPassword,
+      verifyResetToken,
+      confirmPasswordReset,
+      resetPassword, 
       logout 
     }}>
       {children}

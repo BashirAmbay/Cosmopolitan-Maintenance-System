@@ -11,20 +11,16 @@ import locationRoutes from './routes/locationRoutes.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
-import { initDatabaseSchema } from './database/schema.js';
-
+import { seedDatabase } from './database/seed.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize DB schema async (works with both local SQLite and Turso Cloud)
-(async () => {
-  try {
-    await initDatabaseSchema();
-  } catch (err) {
-    console.warn('Database schema initialization warning:', err.message);
-  }
-})();
+// Initialize DB schema & seed data async (works with both local SQLite and Turso Cloud)
+let dbReadyPromise = seedDatabase().catch(err => {
+  console.warn('Database initialization warning:', err.message);
+});
+
 
 const app = express();
 

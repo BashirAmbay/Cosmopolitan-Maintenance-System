@@ -1,6 +1,8 @@
 export default async function handler(req, res) {
   try {
     const { default: app } = await import('../src/app.js');
+    const { seedDatabase } = await import('../src/database/seed.js');
+    await seedDatabase().catch(e => console.warn('Vercel DB seed warning:', e.message));
     return app(req, res);
   } catch (error) {
     console.error('Vercel Serverless Function Startup Error:', error);
@@ -12,3 +14,4 @@ export default async function handler(req, res) {
     });
   }
 }
+

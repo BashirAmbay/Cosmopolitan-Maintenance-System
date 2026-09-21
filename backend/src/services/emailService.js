@@ -244,3 +244,108 @@ export async function sendNotificationEmail({ to, subject, requestRef, title, st
   }
 }
 
+/**
+ * Send Password Reset Link Email
+ */
+export async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes = 60 }) {
+  try {
+    const transporter = createTransporter();
+    const senderEmail = process.env.EMAIL_USER || 'operations@cosmopolitan.edu.ng';
+
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-GB', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const htmlContent = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; padding: 32px 16px; color: #1e293b;">
+        <div style="max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.07), 0 4px 6px -4px rgba(0,0,0,0.05);">
+          
+          <!-- Header Banner -->
+          <div style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); padding: 28px 24px; text-align: center; border-bottom: 4px solid #3b82f6;">
+            <div style="display: inline-block; background: rgba(255,255,255,0.1); padding: 6px 14px; border-radius: 20px; margin-bottom: 8px;">
+              <span style="color: #60a5fa; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">Password Recovery</span>
+            </div>
+            <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px;">
+              COSMOPOLITAN UNIVERSITY
+            </h1>
+            <p style="color: #94a3b8; margin: 6px 0 0 0; font-size: 13px; font-weight: 500;">
+              Operations & Maintenance Management Portal
+            </p>
+          </div>
+
+          <!-- Body Content -->
+          <div style="padding: 32px 24px;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <div style="display: inline-block; width: 52px; height: 52px; line-height: 52px; border-radius: 50%; background-color: #fef3c7; color: #b45309; font-size: 24px; text-align: center;">
+                🔑
+              </div>
+              <h2 style="color: #0f172a; margin: 14px 0 6px 0; font-size: 20px; font-weight: 800;">
+                Reset Your Portal Password
+              </h2>
+              <p style="color: #64748b; margin: 0; font-size: 14px; line-height: 1.5;">
+                Hello <strong style="color: #0f172a;">${name || 'Valued User'}</strong>,<br/>
+                We received a request to reset the password for your Cosmopolitan University account (<strong>${to}</strong>).
+              </p>
+            </div>
+
+            <!-- Primary Action Button -->
+            <div style="text-align: center; margin: 28px 0;">
+              <a href="${resetUrl}" style="background-color: #1e3a8a; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(30,58,138,0.3); letter-spacing: 0.3px;">
+                Reset Password
+              </a>
+            </div>
+
+            <!-- Expiry info -->
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin: 20px 0; text-align: center;">
+              <p style="margin: 0; font-size: 12px; color: #64748b;">
+                ⏰ This password reset confirmation link will expire in <strong>${expiresInMinutes} minutes</strong> (for security reasons).
+              </p>
+            </div>
+
+            <!-- Fallback URL -->
+            <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #f1f5f9;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748b; font-weight: 600;">
+                Button not working? Copy and paste this URL into your web browser:
+              </p>
+              <p style="margin: 0; word-break: break-all; font-size: 11px; background-color: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; color: #1e40af; font-family: monospace;">
+                <a href="${resetUrl}" style="color: #1e40af; text-decoration: none;">${resetUrl}</a>
+              </p>
+            </div>
+
+            <!-- Security Notice -->
+            <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; border-radius: 4px; margin-top: 24px;">
+              <p style="margin: 0; font-size: 12px; color: #991b1b; line-height: 1.5;">
+                <strong>Didn't request this?</strong> If you did not make this request, you can safely ignore this email. Your password will remain unchanged, and nobody can access your account without your email confirmation.
+              </p>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; line-height: 1.5;">
+            <p style="margin: 0;">This is an automated security transmission from Cosmopolitan University Abuja O&M System.</p>
+            <p style="margin: 3px 0 0 0;">Central Campus, Airport Road, Abuja, Nigeria &bull; ${formattedDate}</p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const info = await transporter.sendMail({
+      from: `"Cosmopolitan University Security" <${senderEmail}>`,
+      to,
+      subject: `[Cosmopolitan Security] Password Reset Confirmation Link`,
+      html: htmlContent
+    });
+
+    console.log(`[EmailService] Password reset link email sent to ${to} (MessageId: ${info?.messageId})`);
+    return info;
+  } catch (error) {
+    console.error(`[EmailService] Failed to send password reset email to ${to}:`, error.message);
+    return null;
+  }
+}
+
+

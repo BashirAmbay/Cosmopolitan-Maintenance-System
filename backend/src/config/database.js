@@ -12,6 +12,7 @@ const tursoToken = process.env.TURSO_AUTH_TOKEN;
 
 let db = null;
 let libsqlClient = null;
+let localClient = null;
 
 // Initialize Turso Cloud Client if TURSO_DATABASE_URL is provided in environment
 if (tursoUrl) {
@@ -26,32 +27,29 @@ if (tursoUrl) {
   }
 }
 
-// Fallback to local SQLite if no Turso URL configured
-if (!tursoUrl) {
-  const dbDir = path.join(__dirname, '../../data');
-  const dbPath = isVercel
-    ? path.join('/tmp', 'database.sqlite')
-    : path.join(dbDir, 'database.sqlite');
+// Always initialize local file database engine
+const dbDir = path.join(__dirname, '../../data');
+const dbPath = isVercel
+  ? path.join('/tmp', 'database.sqlite')
+  : path.join(dbDir, 'database.sqlite');
 
-  if (!isVercel && !fs.existsSync(dbDir)) {
-    try { fs.mkdirSync(dbDir, { recursive: true }); } catch (e) {}
-  }
-
-  try {
-    const { default: Database } = await import('better-sqlite3');
-    db = new Database(dbPath);
-    try { db.pragma('journal_mode = WAL'); } catch (e) {}
-    db.pragma('foreign_keys = ON');
-  } catch (err) {
-    // Native better-sqlite3 not available, fallback to @libsql/client file driver
-    const fileUrl = isVercel
-      ? 'file:/tmp/database.sqlite'
-      : `file:${dbPath.replace(/\\/g, '/')}`;
-    try {
-      libsqlClient = createClient({ url: fileUrl });
-    } catch (e) {}
-  }
+if (!isVercel && !fs.existsSync(dbDir)) {
+  try { fs.mkdirSync(dbDir, { recursive: true }); } catch (e) {}
 }
+
+const fileUrl = isVercel
+  ? 'file:/tmp/database.sqlite'
+  : `file:${dbPath.replace(/\\/g, '/')}`;
+try {
+  localClient = createClient({ url: fileUrl });
+} catch (e) {}
+
+try {
+  const { default: Database } = await import('better-sqlite3');
+  db = new Database(dbPath);
+  try { db.pragma('journal_mode = WAL'); } catch (e) {}
+  db.pragma('foreign_keys = ON');
+} catch (err) {}
 
 // ─── Async query helpers (always works with both local sqlite and Turso) ──────
 
@@ -62,27 +60,35 @@ if (!tursoUrl) {
  * @returns {Promise<Array>}
  */
 export async function dbAll(sql, args = []) {
-  if (db) {
-    try {
-      const stmt = db.prepare(sql);
-      return stmt.all(...args) || [];
-    } catch (e) {
-      console.error('dbAll (sqlite) error:', e.message);
-      return [];
-    }
-  }
-  if (libsqlClient) {
+  if (libsqlClient && tursoUrl) {
     try {
       const res = await libsqlClient.execute({ sql, args });
       if (!res.rows) return [];
-      // Convert libsql Row objects to plain JS objects with column names
       return res.rows.map(row => {
         const obj = {};
         res.columns.forEach((col, i) => { obj[col] = row[i]; });
         return obj;
       });
     } catch (e) {
-      console.error('dbAll (turso) error:', e.message);
+      // Fallback to local
+    }
+  }
+  if (localClient) {
+    try {
+      const res = await localClient.execute({ sql, args });
+      if (!res.rows) return [];
+      return res.rows.map(row => {
+        const obj = {};
+        res.columns.forEach((col, i) => { obj[col] = row[i]; });
+        return obj;
+      });
+    } catch (e) {}
+  }
+  if (db) {
+    try {
+      const stmt = db.prepare(sql);
+      return stmt.all(...args) || [];
+    } catch (e) {
       return [];
     }
   }
@@ -96,16 +102,7 @@ export async function dbAll(sql, args = []) {
  * @returns {Promise<Object|null>}
  */
 export async function dbGet(sql, args = []) {
-  if (db) {
-    try {
-      const stmt = db.prepare(sql);
-      return stmt.get(...args) || null;
-    } catch (e) {
-      console.error('dbGet (sqlite) error:', e.message);
-      return null;
-    }
-  }
-  if (libsqlClient) {
+  if (libsqlClient && tursoUrl) {
     try {
       const res = await libsqlClient.execute({ sql, args });
       if (!res.rows || res.rows.length === 0) return null;
@@ -114,7 +111,24 @@ export async function dbGet(sql, args = []) {
       res.columns.forEach((col, i) => { obj[col] = row[i]; });
       return obj;
     } catch (e) {
-      console.error('dbGet (turso) error:', e.message);
+      // Fallback to local
+    }
+  }
+  if (localClient) {
+    try {
+      const res = await localClient.execute({ sql, args });
+      if (!res.rows || res.rows.length === 0) return null;
+      const row = res.rows[0];
+      const obj = {};
+      res.columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    } catch (e) {}
+  }
+  if (db) {
+    try {
+      const stmt = db.prepare(sql);
+      return stmt.get(...args) || null;
+    } catch (e) {
       return null;
     }
   }
@@ -128,22 +142,29 @@ export async function dbGet(sql, args = []) {
  * @returns {Promise<{changes: number, lastInsertRowid: number}>}
  */
 export async function dbRun(sql, args = []) {
+  if (libsqlClient && tursoUrl) {
+    try {
+      const res = await libsqlClient.execute({ sql, args });
+      return { changes: res.rowsAffected || 0, lastInsertRowid: Number(res.lastInsertRowid || 0) };
+    } catch (e) {
+      // Fallback to local
+    }
+  }
+  if (localClient) {
+    try {
+      const res = await localClient.execute({ sql, args });
+      return { changes: res.rowsAffected || 0, lastInsertRowid: Number(res.lastInsertRowid || 0) };
+    } catch (e) {
+      console.error('dbRun (local) error:', e.message);
+      return { changes: 0, lastInsertRowid: 0 };
+    }
+  }
   if (db) {
     try {
       const stmt = db.prepare(sql);
       const result = stmt.run(...args);
       return { changes: result.changes || 0, lastInsertRowid: Number(result.lastInsertRowid || 0) };
     } catch (e) {
-      console.error('dbRun (sqlite) error:', e.message);
-      return { changes: 0, lastInsertRowid: 0 };
-    }
-  }
-  if (libsqlClient) {
-    try {
-      const res = await libsqlClient.execute({ sql, args });
-      return { changes: res.rowsAffected || 0, lastInsertRowid: Number(res.lastInsertRowid || 0) };
-    } catch (e) {
-      console.error('dbRun (turso) error:', e.message);
       return { changes: 0, lastInsertRowid: 0 };
     }
   }
@@ -155,26 +176,27 @@ export async function dbRun(sql, args = []) {
  * @param {string} sql
  */
 export async function dbExec(sql) {
-  if (db) {
-    try { db.exec(sql); } catch (e) { console.error('dbExec (sqlite) error:', e.message); }
-    return;
-  }
-  if (libsqlClient) {
+  if (libsqlClient && tursoUrl) {
     try {
-      // Split on semicolons and execute each statement
       const statements = sql.split(';').map(s => s.trim()).filter(Boolean);
       for (const stmt of statements) {
-        try {
-          await libsqlClient.execute(stmt + ';');
-        } catch (e) {
-          // Ignore "table already exists" etc.
-        }
+        try { await libsqlClient.execute(stmt + ';'); } catch (e) {}
       }
-    } catch (e) {
-      console.error('dbExec (turso) error:', e.message);
-    }
+    } catch (e) {}
+  }
+  if (localClient) {
+    try {
+      const statements = sql.split(';').map(s => s.trim()).filter(Boolean);
+      for (const stmt of statements) {
+        try { await localClient.execute(stmt + ';'); } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  if (db) {
+    try { db.exec(sql); } catch (e) {}
   }
 }
+
 
 // Legacy synchronous interface (kept for backward compat with local sqlite only)
 const unifiedDb = {

@@ -1,9 +1,10 @@
+import crypto from 'crypto';
 import { dbGet, dbRun } from '../config/database.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { logAudit } from '../services/auditService.js';
-import { sendLoginNotificationEmail } from '../services/emailService.js';
+import { sendLoginNotificationEmail, sendPasswordResetEmail } from '../services/emailService.js';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -342,9 +343,114 @@ export async function getCurrentUser(req, res) {
   }
 }
 
+const forgotPasswordSchema = z.object({
+  email: z.string().email()
+});
+
+export async function forgotPassword(req, res) {
+  try {
+    const parse = forgotPasswordSchema.safeParse(req.body);
+    if (!parse.success) {
+      return res.status(400).json({ error: 'Please provide a valid email address.' });
+    }
+
+    const { email } = parse.data;
+    const cleanEmail = email.toLowerCase().trim();
+
+    if (!isCosmopolitanEmail(cleanEmail)) {
+      return res.status(400).json({
+        error: 'This email is not a Cosmopolitan email, please use your registered Cosmopolitan email.'
+      });
+    }
+
+    const user = await dbGet('SELECT * FROM users WHERE email = ?', [cleanEmail]);
+
+    if (user) {
+      // Generate a cryptographically secure reset token
+      const token = crypto.randomBytes(32).toString('hex');
+      // Token valid for 60 minutes
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+      // Invalidate any previous unused tokens for this email
+      try {
+        await dbRun('UPDATE password_resets SET used = 1 WHERE email = ? AND used = 0', [cleanEmail]);
+      } catch (e) {}
+
+      // Insert new token
+      await dbRun(
+        'INSERT INTO password_resets (email, token, expires_at, used) VALUES (?, ?, ?, 0)',
+        [cleanEmail, token, expiresAt]
+      );
+
+      const clientUrl = process.env.CLIENT_URL || 'https://cosmopolitan-maintenance.vercel.app';
+      const resetUrl = `${clientUrl.replace(/\/+$/, '')}/reset-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
+
+      // Send password reset email asynchronously
+      sendPasswordResetEmail({
+        to: cleanEmail,
+        name: user.name,
+        resetUrl,
+        expiresInMinutes: 60
+      }).catch(err => {
+        console.error('[Auth] Failed to dispatch password reset email:', err.message);
+      });
+
+      try {
+        logAudit({
+          userId: user.id,
+          action: 'USER_PASSWORD_RESET_REQUESTED',
+          entityType: 'USER',
+          entityId: user.id,
+          details: `Password reset confirmation link generated for ${cleanEmail}`,
+          ipAddress: req.ip
+        });
+      } catch (auditErr) {}
+    }
+
+    return res.json({
+      message: 'If an account exists with that email, a password reset confirmation link has been sent to your inbox. Please check your email.'
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({ error: 'Failed to process password reset request.' });
+  }
+}
+
+export async function verifyResetToken(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    const email = req.query.email || req.body?.email;
+
+    if (!token || !email) {
+      return res.status(400).json({ valid: false, error: 'Reset token and email are required.' });
+    }
+
+    const cleanEmail = String(email).toLowerCase().trim();
+    const resetRecord = await dbGet(
+      'SELECT * FROM password_resets WHERE token = ? AND email = ? AND used = 0 ORDER BY id DESC LIMIT 1',
+      [token, cleanEmail]
+    );
+
+    if (!resetRecord) {
+      return res.status(400).json({ valid: false, error: 'Password reset link is invalid or has already been used.' });
+    }
+
+    const isExpired = new Date(resetRecord.expires_at) < new Date();
+    if (isExpired) {
+      return res.status(400).json({ valid: false, error: 'Password reset link has expired. Please request a new link.' });
+    }
+
+    return res.json({ valid: true, email: cleanEmail });
+  } catch (error) {
+    console.error('Verify reset token error:', error);
+    return res.status(500).json({ valid: false, error: 'Failed to verify reset token.' });
+  }
+}
+
 const resetPasswordSchema = z.object({
   email: z.string().email(),
-  newPassword: z.string().min(6, 'New password must be at least 6 characters long')
+  newPassword: z.string().min(6, 'New password must be at least 6 characters long'),
+  token: z.string().optional()
 });
 
 export async function resetPassword(req, res) {
@@ -354,13 +460,32 @@ export async function resetPassword(req, res) {
       return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
     }
 
-    const { email, newPassword } = parse.data;
+    const { email, newPassword, token } = parse.data;
     const cleanEmail = email.toLowerCase().trim();
 
     if (!isCosmopolitanEmail(cleanEmail)) {
       return res.status(400).json({
         error: 'This email is not a Cosmopolitan email, please login with your Cosmopolitan email.'
       });
+    }
+
+    // If token is provided, verify it first
+    if (token) {
+      const resetRecord = await dbGet(
+        'SELECT * FROM password_resets WHERE token = ? AND email = ? AND used = 0 ORDER BY id DESC LIMIT 1',
+        [token, cleanEmail]
+      );
+
+      if (!resetRecord) {
+        return res.status(400).json({ error: 'Invalid or already used password reset link. Please request a new one.' });
+      }
+
+      if (new Date(resetRecord.expires_at) < new Date()) {
+        return res.status(400).json({ error: 'This password reset link has expired. Please request a new one.' });
+      }
+
+      // Mark token as used
+      await dbRun('UPDATE password_resets SET used = 1 WHERE id = ?', [resetRecord.id]);
     }
 
     const user = await dbGet('SELECT * FROM users WHERE email = ?', [cleanEmail]);
@@ -374,12 +499,12 @@ export async function resetPassword(req, res) {
         [defaultName, cleanEmail, passwordHash, defaultDept ? defaultDept.id : null]
       );
       try {
-        logAudit({ userId: result.lastInsertRowid, action: 'USER_PASSWORD_RESET', entityType: 'USER', entityId: result.lastInsertRowid, details: `Password reset for new user ${cleanEmail}`, ipAddress: req.ip });
+        logAudit({ userId: result.lastInsertRowid, action: 'USER_PASSWORD_RESET', entityType: 'USER', entityId: result.lastInsertRowid, details: `Password reset via confirmation link for new user ${cleanEmail}`, ipAddress: req.ip });
       } catch (e) {}
     } else {
       await dbRun('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [passwordHash, user.id]);
       try {
-        logAudit({ userId: user.id, action: 'USER_PASSWORD_RESET', entityType: 'USER', entityId: user.id, details: `Password reset successfully for ${cleanEmail}`, ipAddress: req.ip });
+        logAudit({ userId: user.id, action: 'USER_PASSWORD_RESET', entityType: 'USER', entityId: user.id, details: `Password reset successfully via confirmation link for ${cleanEmail}`, ipAddress: req.ip });
       } catch (auditErr) {}
     }
 
@@ -389,3 +514,4 @@ export async function resetPassword(req, res) {
     return res.status(500).json({ error: 'Internal server error while resetting password.' });
   }
 }
+
