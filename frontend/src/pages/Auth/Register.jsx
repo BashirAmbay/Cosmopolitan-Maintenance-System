@@ -6,6 +6,8 @@ import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { isCosmopolitanEmail } from '../../utils/validation';
 
+import { DEFAULT_DEPARTMENTS, TECHNICIAN_SPECIALIZATIONS } from '../../data/defaults';
+
 export const Register = () => {
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -21,13 +23,17 @@ export const Register = () => {
   });
 
   const [showPassword, setShowPassword] = useState(false);
-  const [departments, setDepartments] = useState([]);
+  const [departments, setDepartments] = useState(DEFAULT_DEPARTMENTS);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     api.get('/departments')
-      .then(res => setDepartments(res.data.departments || []))
+      .then(res => {
+        if (res.data?.departments && res.data.departments.length > 0) {
+          setDepartments(res.data.departments);
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -192,13 +198,22 @@ export const Register = () => {
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Specialization (Optional)
                 </label>
-                <input
-                  type="text"
+                <select
                   value={formData.specialization}
                   onChange={(e) => setFormData({ ...formData, specialization: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-800/40 focus:border-blue-900"
-                  placeholder="e.g. HVAC, Level 300"
-                />
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-800/40 focus:border-blue-900"
+                >
+                  <option value="">Select Specialization</option>
+                  <option value="Air Conditioning & HVAC">Air Conditioning & HVAC</option>
+                  <option value="Electrical Systems & Power">Electrical Systems & Power</option>
+                  <option value="Plumbing & Water Supply">Plumbing & Water Supply</option>
+                  <option value="ICT Networking & Systems">ICT Networking & Systems</option>
+                  <option value="Audio/Visual & Smart Boards">Audio/Visual & Smart Boards</option>
+                  <option value="Carpentry & Furniture">Carpentry & Furniture</option>
+                  <option value="Janitorial & Sanitation">Janitorial & Sanitation</option>
+                  <option value="Security, Locks & Access Control">Security, Locks & Access Control</option>
+                  <option value="General Maintenance">General Maintenance</option>
+                </select>
               </div>
             </div>
 

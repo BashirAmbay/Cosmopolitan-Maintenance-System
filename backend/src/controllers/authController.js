@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { logAudit } from '../services/auditService.js';
+import { sendLoginNotificationEmail } from '../services/emailService.js';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -83,28 +84,19 @@ export async function login(req, res) {
 
       const defaultDept = await dbGet("SELECT id FROM departments WHERE code = 'CSIT' LIMIT 1", []);
 
-      const result = await dbRun(
+      await dbRun(
         `INSERT INTO users (name, email, password_hash, role, department_id, phone, specialization, is_active)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
         [defaultName, cleanEmail, defaultPasswordHash, assignedRole, defaultDept ? defaultDept.id : null, null, null]
       );
 
-      const insertId = result.lastInsertRowid || Date.now();
-
       user = await dbGet(
-        'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.id = ?',
-        [insertId]
+        'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.email = ?',
+        [cleanEmail]
       );
 
       if (!user) {
-        user = {
-          id: insertId,
-          email: cleanEmail,
-          name: defaultName,
-          role: assignedRole,
-          department_id: defaultDept ? defaultDept.id : null,
-          is_active: 1
-        };
+        return res.status(500).json({ error: 'Failed to create user session in database.' });
       }
 
       requiresSetup = (assignedRole === 'student' || assignedRole === 'staff');
@@ -157,6 +149,17 @@ export async function login(req, res) {
       });
     } catch (auditErr) {}
 
+    // Send login notification email asynchronously (non-blocking)
+    sendLoginNotificationEmail({
+      to: user.email,
+      name: user.name,
+      role: user.role,
+      ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress,
+      userAgent: req.headers['user-agent']
+    }).catch(err => {
+      console.error('[Auth] Failed to dispatch login email:', err.message);
+    });
+
     const { password_hash, ...userWithoutPassword } = user;
 
     return res.json({
@@ -180,7 +183,16 @@ export async function completeProfile(req, res) {
     }
 
     const { role, department_id, name, phone, specialization } = parse.data;
-    const userId = req.user?.id || 1;
+    
+    let userRecord = null;
+    if (req.user?.email) {
+      userRecord = await dbGet('SELECT * FROM users WHERE email = ?', [req.user.email.toLowerCase()]);
+    }
+    if (!userRecord && req.user?.id) {
+      userRecord = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    }
+
+    const userId = userRecord ? userRecord.id : (req.user?.id || 1);
 
     await dbRun(
       `UPDATE users SET role = ?, department_id = ?, name = COALESCE(?, name), phone = COALESCE(?, phone), specialization = COALESCE(?, specialization)
@@ -194,16 +206,7 @@ export async function completeProfile(req, res) {
     );
 
     if (!updatedUser) {
-      updatedUser = {
-        id: userId,
-        email: req.user?.email || 'user@cosmopolitan.edu.ng',
-        name: name || req.user?.name || 'Cosmopolitan User',
-        role: role,
-        department_id: department_id || null,
-        phone: phone || null,
-        specialization: specialization || null,
-        is_active: 1
-      };
+      updatedUser = await dbGet('SELECT * FROM users WHERE email = ?', [req.user?.email?.toLowerCase()]);
     }
 
     const token = jwt.sign(
@@ -264,30 +267,19 @@ export async function register(req, res) {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const result = await dbRun(
+    await dbRun(
       `INSERT INTO users (name, email, password_hash, role, department_id, phone, specialization)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [name, email.toLowerCase(), passwordHash, role, department_id || null, phone || null, specialization || null]
     );
 
-    const insertId = result.lastInsertRowid || Date.now();
-
     let newUser = await dbGet(
-      'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.id = ?',
-      [insertId]
+      'SELECT u.*, d.name as department_name FROM users u LEFT JOIN departments d ON u.department_id = d.id WHERE u.email = ?',
+      [email.toLowerCase()]
     );
 
     if (!newUser) {
-      newUser = {
-        id: insertId,
-        email: email.toLowerCase(),
-        name,
-        role,
-        department_id: department_id || null,
-        phone: phone || null,
-        specialization: specialization || null,
-        is_active: 1
-      };
+      return res.status(500).json({ error: 'Failed to create user account in database.' });
     }
 
     const token = jwt.sign(

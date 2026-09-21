@@ -205,13 +205,22 @@ export const AdminPanel = () => {
                 onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })}
                 className="p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900"
               />
-              <input
-                type="text"
-                placeholder="Specialization / Field"
+              <select
                 value={userForm.specialization}
                 onChange={(e) => setUserForm({ ...userForm, specialization: e.target.value })}
-                className="p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900"
-              />
+                className="p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs font-semibold"
+              >
+                <option value="">Specialization (Optional)</option>
+                <option value="Air Conditioning & HVAC">Air Conditioning & HVAC</option>
+                <option value="Electrical Systems & Power">Electrical Systems & Power</option>
+                <option value="Plumbing & Water Supply">Plumbing & Water Supply</option>
+                <option value="ICT Networking & Systems">ICT Networking & Systems</option>
+                <option value="Audio/Visual & Smart Boards">Audio/Visual & Smart Boards</option>
+                <option value="Carpentry & Furniture">Carpentry & Furniture</option>
+                <option value="Janitorial & Sanitation">Janitorial & Sanitation</option>
+                <option value="Security, Locks & Access Control">Security, Locks & Access Control</option>
+                <option value="General Maintenance">General Maintenance</option>
+              </select>
               <div className="sm:col-span-3 flex justify-end">
                 <button
                   type="submit"

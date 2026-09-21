@@ -2,11 +2,12 @@ import app from './src/app.js';
 import dotenv from 'dotenv';
 import { seedDatabase } from './src/database/seed.js';
 
+// Cosmopolitan University Abuja O&M Server - Updated 2026-09-21
 dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 
-// Auto-seed on server boot to ensure initial data exists
+// Initialize data setup
 seedDatabase().then(() => {
   const server = app.listen(PORT, () => {
     console.log(`=======================================================`);

@@ -1,23 +1,11 @@
-import db from '../config/database.js';
+import { dbRun, dbExec } from '../config/database.js';
 import { initDatabaseSchema } from './schema.js';
 import bcrypt from 'bcryptjs';
 
 export async function seedDatabase() {
-  initDatabaseSchema();
+  await initDatabaseSchema();
 
-  console.log('Clearing all test requests, comments, notifications, and logs...');
-  // Clear all previous test requests and user data
-  db.prepare('DELETE FROM attachments').run();
-  db.prepare('DELETE FROM comments').run();
-  db.prepare('DELETE FROM status_history').run();
-  db.prepare('DELETE FROM assignments').run();
-  db.prepare('DELETE FROM notifications').run();
-  db.prepare('DELETE FROM audit_logs').run();
-  db.prepare('DELETE FROM maintenance_requests').run();
-  db.prepare('DELETE FROM users').run();
-  db.prepare('DELETE FROM sqlite_sequence').run();
-
-  console.log('Seeding Cosmopolitan University Abuja official setup data...');
+  console.log('Ensuring Cosmopolitan University Abuja setup data exists...');
 
   // 1. Departments
   const departments = [
@@ -31,9 +19,10 @@ export async function seedDatabase() {
     { name: 'Estates & Facilities Management', code: 'ESTM', head_name: 'Arch. Suleiman Garba', description: 'Physical Planning & Maintenance Unit' },
   ];
 
-  const insertDept = db.prepare('INSERT OR IGNORE INTO departments (name, code, description, head_name) VALUES (?, ?, ?, ?)');
   for (const d of departments) {
-    insertDept.run(d.name, d.code, d.description, d.head_name);
+    await dbRun('INSERT OR IGNORE INTO departments (name, code, description, head_name) VALUES (?, ?, ?, ?)', [
+      d.name, d.code, d.description, d.head_name
+    ]);
   }
 
   // 2. Real Campus Locations (Floors & Room Numbers)
@@ -116,9 +105,10 @@ export async function seedDatabase() {
     { name: 'Room P.11', building: 'Cosmopolitan Campus Building', floor: 'Penthouse Floor (PF)', room_number: 'P.11', description: 'Penthouse Floor - Room P.11' },
   ];
 
-  const insertLoc = db.prepare('INSERT OR IGNORE INTO locations (name, building, floor, room_number, description) VALUES (?, ?, ?, ?, ?)');
   for (const l of locations) {
-    insertLoc.run(l.name, l.building, l.floor, l.room_number, l.description);
+    await dbRun('INSERT OR IGNORE INTO locations (name, building, floor, room_number, description) VALUES (?, ?, ?, ?, ?)', [
+      l.name, l.building, l.floor, l.room_number, l.description
+    ]);
   }
 
   // 3. Categories
@@ -133,28 +123,30 @@ export async function seedDatabase() {
     { name: 'Security, Locks & Doors', description: 'Door locks, access control keycards, window latches, CCTV', icon: 'lock', sla_hours: 4 },
   ];
 
-  const insertCat = db.prepare('INSERT OR IGNORE INTO categories (name, description, icon, sla_hours) VALUES (?, ?, ?, ?)');
   for (const c of categories) {
-    insertCat.run(c.name, c.description, c.icon, c.sla_hours);
+    await dbRun('INSERT OR IGNORE INTO categories (name, description, icon, sla_hours) VALUES (?, ?, ?, ?)', [
+      c.name, c.description, c.icon, c.sla_hours
+    ]);
   }
 
-  // 4. Official System Users (Admin & VC Management)
+  // 4. Official System Users
   const passwordHash = await bcrypt.hash('password123', 10);
   const users = [
     { name: 'Admin Operations', email: 'admin@cosmopolitan.edu.ng', role: 'admin', department_id: 6, phone: '+234 803 111 2233', specialization: 'System Administration' },
-    { name: 'Vice Chancellor Management', email: 'management@cosmopolitan.edu.ng', role: 'management', department_id: 6, phone: '+234 802 999 8877', specialization: 'Executive Operations' }
+    { name: 'Vice Chancellor Management', email: 'management@cosmopolitan.edu.ng', role: 'management', department_id: 6, phone: '+234 802 999 8877', specialization: 'Executive Operations' },
+    { name: 'Musa Ibrahim (Student)', email: 'musa.ibrahim@cosmopolitan.edu.ng', role: 'student', department_id: 1, phone: '+234 801 234 5678', specialization: null },
+    { name: 'Dr. Amina Bello (Staff)', email: 'amina.bello@cosmopolitan.edu.ng', role: 'staff', department_id: 1, phone: '+234 802 345 6789', specialization: null },
+    { name: 'Kabiru Usman (Technician)', email: 'kabiru.usman@cosmopolitan.edu.ng', role: 'technician', department_id: 8, phone: '+234 803 456 7890', specialization: 'Air Conditioning & HVAC' },
+    { name: 'Emeka Okafor (Plumber)', email: 'emeka.okafor@cosmopolitan.edu.ng', role: 'technician', department_id: 8, phone: '+234 804 567 8901', specialization: 'Plumbing & Water Supply' },
   ];
 
-  const insertUser = db.prepare('INSERT OR IGNORE INTO users (name, email, password_hash, role, department_id, phone, specialization) VALUES (?, ?, ?, ?, ?, ?, ?)');
   for (const u of users) {
-    insertUser.run(u.name, u.email, passwordHash, u.role, u.department_id, u.phone, u.specialization);
+    await dbRun('INSERT OR IGNORE INTO users (name, email, password_hash, role, department_id, phone, specialization) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+      u.name, u.email, passwordHash, u.role, u.department_id, u.phone, u.specialization
+    ]);
   }
 
-  // Record System Clean Audit Log
-  const insertAudit = db.prepare('INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)');
-  insertAudit.run(1, 'DATABASE_RESET', 'SYSTEM', 0, 'Wiped all test data & sample requests. System ready for live operation.', '127.0.0.1');
-
-  console.log('Database reset complete! ZERO test requests present. Ready for live usage!');
+  console.log('Database initialization check complete!');
 }
 
 if (process.argv[1] && process.argv[1].endsWith('seed.js')) {

@@ -4,6 +4,8 @@ import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { Building2, User, Shield, Wrench, GraduationCap, UserCheck, ArrowRight, CheckCircle2 } from 'lucide-react';
 
+import { DEFAULT_DEPARTMENTS, TECHNICIAN_SPECIALIZATIONS } from '../../data/defaults';
+
 export const ProfileSetupModal = () => {
   const { user, showSetupModal, setShowSetupModal, completeProfile } = useAuth();
 
@@ -13,13 +15,17 @@ export const ProfileSetupModal = () => {
   const [phone, setPhone] = useState(user?.phone || '');
   const [specialization, setSpecialization] = useState(user?.specialization || '');
 
-  const [departments, setDepartments] = useState([]);
+  const [departments, setDepartments] = useState(DEFAULT_DEPARTMENTS);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (showSetupModal || !user?.department_id) {
       api.get('/departments')
-        .then(res => setDepartments(res.data.departments || []))
+        .then(res => {
+          if (res.data?.departments && res.data.departments.length > 0) {
+            setDepartments(res.data.departments);
+          }
+        })
         .catch(() => {});
     }
   }, [showSetupModal, user]);
@@ -52,12 +58,6 @@ export const ProfileSetupModal = () => {
     }
   };
 
-  const rolesList = [
-    { key: 'student', label: 'Student', icon: GraduationCap, desc: 'Report campus issues & track ticket progress' },
-    { key: 'staff', label: 'Faculty / Staff', icon: UserCheck, desc: 'Classroom, lab & office facility requests' },
-    { key: 'technician', label: 'Technician', icon: Wrench, desc: 'Work order queue & repair assignments' }
-  ];
-
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 font-sans">
       <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 max-w-xl w-full space-y-6 shadow-2xl">
@@ -82,38 +82,21 @@ export const ProfileSetupModal = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* 1. Role Selector Cards */}
+          {/* 1. University Role Dropdown */}
           <div>
-            <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">
               1. Select University Role <span className="text-blue-900">*</span>
             </label>
-            <div className="grid grid-cols-2 gap-2.5">
-              {rolesList.map((r) => {
-                const Icon = r.icon;
-                const isSelected = role === r.key;
-                return (
-                  <button
-                    type="button"
-                    key={r.key}
-                    onClick={() => setRole(r.key)}
-                    className={`p-3 rounded-2xl border text-left transition-all flex flex-col justify-between ${
-                      isSelected
-                        ? 'border-blue-900 bg-blue-50/80 text-blue-950 ring-2 ring-blue-900/30 shadow-xs'
-                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <Icon className={`w-5 h-5 ${isSelected ? 'text-blue-900' : 'text-slate-500'}`} />
-                      {isSelected && <CheckCircle2 className="w-4 h-4 text-blue-900" />}
-                    </div>
-                    <div className="mt-2">
-                      <span className="text-xs font-black block">{r.label}</span>
-                      <span className="text-[10px] text-slate-500 leading-tight block mt-0.5">{r.desc}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <select
+              required
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:border-blue-900 focus:ring-1 focus:ring-blue-900"
+            >
+              <option value="student">Student</option>
+              <option value="staff">Faculty / Staff</option>
+              <option value="technician">Technician</option>
+            </select>
           </div>
 
           {/* 2. Department Selector */}
@@ -130,7 +113,7 @@ export const ProfileSetupModal = () => {
               <option value="">Choose Department</option>
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.name} ({d.code})
+                  {d.name} {d.code ? `(${d.code})` : ''}
                 </option>
               ))}
             </select>
@@ -170,15 +153,25 @@ export const ProfileSetupModal = () => {
           {role === 'technician' && (
             <div>
               <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">
-                Technician Specialization
+                Technician Specialization <span className="text-blue-900">*</span>
               </label>
-              <input
-                type="text"
+              <select
+                required
                 value={specialization}
                 onChange={(e) => setSpecialization(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:border-blue-900"
-                placeholder="e.g. HVAC Air Conditioning, Electrical Systems, ICT Networking"
-              />
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:border-blue-900 focus:ring-1 focus:ring-blue-900"
+              >
+                <option value="">Select Specialization</option>
+                <option value="Air Conditioning & HVAC">Air Conditioning & HVAC</option>
+                <option value="Electrical Systems & Power">Electrical Systems & Power</option>
+                <option value="Plumbing & Water Supply">Plumbing & Water Supply</option>
+                <option value="ICT Networking & Systems">ICT Networking & Systems</option>
+                <option value="Audio/Visual & Smart Boards">Audio/Visual & Smart Boards</option>
+                <option value="Carpentry & Furniture">Carpentry & Furniture</option>
+                <option value="Janitorial & Sanitation">Janitorial & Sanitation</option>
+                <option value="Security, Locks & Access Control">Security, Locks & Access Control</option>
+                <option value="General Maintenance">General Maintenance</option>
+              </select>
             </div>
           )}
 

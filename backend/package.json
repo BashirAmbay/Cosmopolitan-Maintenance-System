@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
+    "dev": "node --watch --watch-path=src --watch-path=. server.js",
     "seed": "node src/database/seed.js",
     "postinstall": "npm rebuild better-sqlite3 || true",
     "vercel-build": "echo 'Vercel backend build ready'"

@@ -16,12 +16,25 @@ async function generateReferenceNumber() {
   return `CUA-${yearStr}${monthStr}-${seq}`;
 }
 
+async function resolveRequestId(idOrRef) {
+  if (!idOrRef) return null;
+  const str = String(idOrRef).trim();
+  if (/^\d+$/.test(str)) {
+    return Number(str);
+  }
+  const row = await dbGet('SELECT id FROM maintenance_requests WHERE reference_number = ?', [str]);
+  return row ? row.id : null;
+}
+
 const createRequestSchema = z.object({
   title: z.string().min(3),
   description: z.string().min(5),
-  category_id: z.coerce.number(),
-  location_id: z.coerce.number(),
-  department_id: z.coerce.number().optional().nullable(),
+  category_id: z.coerce.number().int().positive(),
+  location_id: z.coerce.number().int().positive(),
+  department_id: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined || isNaN(Number(val)) || Number(val) <= 0 ? null : Number(val)),
+    z.number().int().positive().nullable().optional()
+  ),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium')
 });
 
@@ -42,8 +55,30 @@ export async function createRequest(req, res) {
 
     const dueDate = new Date(Date.now() + slaHours * 3600 * 1000).toISOString();
     const refNumber = await generateReferenceNumber();
-    const userDeptId = department_id || req.user?.department_id || null;
-    const userId = req.user?.id || 1;
+    const userDeptId = (department_id && Number(department_id) > 0) ? Number(department_id) : (req.user?.department_id || null);
+    
+    // Ensure valid user ID for foreign key integrity
+    let userId = req.user?.id;
+    if (userId) {
+      const userCheck = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
+      if (!userCheck && req.user?.email) {
+        const userByEmail = await dbGet('SELECT id FROM users WHERE email = ?', [req.user.email.toLowerCase()]);
+        if (userByEmail) {
+          userId = userByEmail.id;
+        } else {
+          const validDept = (userDeptId && Number(userDeptId) > 0) ? Number(userDeptId) : null;
+          const newUser = await dbRun(
+            'INSERT INTO users (name, email, password_hash, role, department_id, phone, specialization) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [req.user.name || 'Campus User', req.user.email.toLowerCase(), '$2a$10$wE0P7hZzYc6rC8F13', req.user.role || 'student', validDept, req.user.phone || null, req.user.specialization || null]
+          );
+          userId = newUser.lastInsertRowid;
+        }
+      }
+    }
+    if (!userId) {
+      const fallbackUser = await dbGet('SELECT id FROM users LIMIT 1');
+      userId = fallbackUser?.id || 1;
+    }
 
     const result = await dbRun(
       `INSERT INTO maintenance_requests 
@@ -52,7 +87,16 @@ export async function createRequest(req, res) {
       [refNumber, title, description, category_id, location_id, userDeptId, priority, userId, dueDate]
     );
 
-    const requestId = result.lastInsertRowid || Date.now();
+    let requestId = result.lastInsertRowid;
+    if (!requestId || requestId === 0) {
+      const createdRow = await dbGet('SELECT id FROM maintenance_requests WHERE reference_number = ?', [refNumber]);
+      requestId = createdRow?.id;
+    }
+
+    if (!requestId) {
+      console.error('Failed to create maintenance request: row was not inserted into database.');
+      return res.status(500).json({ error: 'Failed to record maintenance request in database.' });
+    }
 
     if (req.file) {
       try {
@@ -60,7 +104,9 @@ export async function createRequest(req, res) {
           `INSERT INTO attachments (request_id, file_name, file_path, file_type, file_size, attachment_type, uploaded_by_id) VALUES (?, ?, ?, ?, ?, 'evidence', ?)`,
           [requestId, req.file.originalname, `/uploads/${req.file.filename}`, req.file.mimetype, req.file.size, userId]
         );
-      } catch (e) {}
+      } catch (e) {
+        console.error('Attachment insert warning:', e.message);
+      }
     }
 
     try {
@@ -131,8 +177,8 @@ export async function getRequests(req, res) {
     const params = [];
 
     if (req.user?.role === 'student' || req.user?.role === 'staff' || my_requests === 'true') {
-      query += ` AND r.reported_by_id = ?`;
-      params.push(req.user.id);
+      query += ` AND (r.reported_by_id = ? OR reporter.email = ?)`;
+      params.push(req.user.id, req.user?.email || '');
     } else if (req.user?.role === 'technician' && my_requests === 'true') {
       query += ` AND r.assigned_to_id = ?`;
       params.push(req.user.id);
@@ -160,10 +206,14 @@ export async function getRequests(req, res) {
 
     const requests = await dbAll(query, params);
 
-    let countQuery = `SELECT COUNT(*) as total FROM maintenance_requests r WHERE 1=1`;
+    let countQuery = `SELECT COUNT(*) as total FROM maintenance_requests r LEFT JOIN users reporter ON r.reported_by_id = reporter.id WHERE 1=1`;
     const countParams = [];
     if (req.user?.role === 'student' || req.user?.role === 'staff' || my_requests === 'true') {
-      countQuery += ` AND r.reported_by_id = ?`; countParams.push(req.user.id);
+      countQuery += ` AND (r.reported_by_id = ? OR reporter.email = ?)`;
+      countParams.push(req.user.id, req.user?.email || '');
+    } else if (req.user?.role === 'technician' && my_requests === 'true') {
+      countQuery += ` AND r.assigned_to_id = ?`;
+      countParams.push(req.user.id);
     }
     if (status) { countQuery += ` AND r.status = ?`; countParams.push(status); }
     const totalCountObj = await dbGet(countQuery, countParams);
@@ -185,6 +235,7 @@ export async function getRequests(req, res) {
 export async function getRequestById(req, res) {
   try {
     const { id } = req.params;
+    const isNumericId = !isNaN(Number(id)) && /^\d+$/.test(String(id).trim());
 
     const request = await dbGet(`
       SELECT 
@@ -200,38 +251,45 @@ export async function getRequestById(req, res) {
       LEFT JOIN departments d ON r.department_id = d.id
       LEFT JOIN users reporter ON r.reported_by_id = reporter.id
       LEFT JOIN users tech ON r.assigned_to_id = tech.id
-      WHERE r.id = ?
-    `, [id]);
+      WHERE ${isNumericId ? '(r.id = ? OR r.reference_number = ?)' : 'r.reference_number = ?'}
+    `, isNumericId ? [Number(id), id] : [id]);
 
     if (!request) {
       return res.status(404).json({ error: 'Maintenance request not found.' });
     }
 
+    const actualId = request.id;
+
     const comments = await dbAll(`
       SELECT com.*, u.name as user_name, u.role as user_role, u.avatar_url
       FROM comments com
-      JOIN users u ON com.user_id = u.id
+      LEFT JOIN users u ON com.user_id = u.id
       WHERE com.request_id = ?
       ORDER BY com.created_at ASC
-    `, [id]);
+    `, [actualId]);
 
     const attachments = await dbAll(`
       SELECT att.*, u.name as uploader_name
       FROM attachments att
-      JOIN users u ON att.uploaded_by_id = u.id
+      LEFT JOIN users u ON att.uploaded_by_id = u.id
       WHERE att.request_id = ?
       ORDER BY att.created_at ASC
-    `, [id]);
+    `, [actualId]);
 
     const history = await dbAll(`
       SELECT sh.*, u.name as changed_by_name, u.role as changed_by_role
       FROM status_history sh
-      JOIN users u ON sh.changed_by_id = u.id
+      LEFT JOIN users u ON sh.changed_by_id = u.id
       WHERE sh.request_id = ?
       ORDER BY sh.created_at ASC
-    `, [id]);
+    `, [actualId]);
 
-    return res.json({ request, comments, attachments, history });
+    return res.json({ 
+      request, 
+      comments: comments || [], 
+      attachments: attachments || [], 
+      history: history || [] 
+    });
   } catch (error) {
     console.error('Get request by id error:', error);
     return res.status(500).json({ error: 'Failed to fetch request details.' });
@@ -240,9 +298,12 @@ export async function getRequestById(req, res) {
 
 export async function assignTechnician(req, res) {
   try {
-    const { id } = req.params;
-    const { technician_id, notes } = req.body;
+    const actualId = await resolveRequestId(req.params.id);
+    if (!actualId) {
+      return res.status(404).json({ error: 'Maintenance request not found.' });
+    }
 
+    const { technician_id, notes } = req.body;
     if (!technician_id) {
       return res.status(400).json({ error: 'Technician selection is required.' });
     }
@@ -253,13 +314,13 @@ export async function assignTechnician(req, res) {
 
     await dbRun(
       `UPDATE maintenance_requests SET assigned_to_id = ?, status = 'assigned', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [techId, id]
+      [techId, actualId]
     );
 
     try {
       await dbRun(
         `INSERT INTO assignments (request_id, technician_id, assigned_by_id, notes) VALUES (?, ?, ?, ?)`,
-        [id, techId, req.user?.id || 1, notes || 'Assigned from dashboard.']
+        [actualId, techId, req.user?.id || 1, notes || 'Assigned from dashboard.']
       );
     } catch (e) {}
 
@@ -272,9 +333,12 @@ export async function assignTechnician(req, res) {
 
 export async function updateStatus(req, res) {
   try {
-    const { id } = req.params;
-    const { status, remarks, resolution_notes } = req.body;
+    const actualId = await resolveRequestId(req.params.id);
+    if (!actualId) {
+      return res.status(404).json({ error: 'Maintenance request not found.' });
+    }
 
+    const { status, remarks, resolution_notes } = req.body;
     const validStatuses = ['pending', 'assigned', 'in_progress', 'on_hold', 'resolved', 'closed', 'reopened'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: 'Invalid status value provided.' });
@@ -291,17 +355,14 @@ export async function updateStatus(req, res) {
            closed_at = COALESCE(?, closed_at),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [status, resolution_notes || null, resolvedAt, closedAt, id]
+      [status, resolution_notes || null, resolvedAt, closedAt, actualId]
     );
 
     try {
-      const request = await dbGet('SELECT reported_by_id FROM maintenance_requests WHERE id = ?', [id]);
-      if (request) {
-        await dbRun(
-          `INSERT INTO status_history (request_id, new_status, changed_by_id, remarks) VALUES (?, ?, ?, ?)`,
-          [id, status, req.user?.id || 1, remarks || `Status changed to ${status}`]
-        );
-      }
+      await dbRun(
+        `INSERT INTO status_history (request_id, new_status, changed_by_id, remarks) VALUES (?, ?, ?, ?)`,
+        [actualId, status, req.user?.id || 1, remarks || `Status changed to ${status}`]
+      );
     } catch (e) {}
 
     return res.json({ message: `Request status updated to ${status}.` });
@@ -313,21 +374,24 @@ export async function updateStatus(req, res) {
 
 export async function addComment(req, res) {
   try {
-    const { id } = req.params;
-    const { content } = req.body;
+    const actualId = await resolveRequestId(req.params.id);
+    if (!actualId) {
+      return res.status(404).json({ error: 'Maintenance request not found.' });
+    }
 
+    const { content } = req.body;
     if (!content || !content.trim()) {
       return res.status(400).json({ error: 'Comment content cannot be empty.' });
     }
 
     const result = await dbRun(
       `INSERT INTO comments (request_id, user_id, content, is_internal) VALUES (?, ?, ?, 0)`,
-      [id, req.user?.id || 1, content.trim()]
+      [actualId, req.user?.id || 1, content.trim()]
     );
 
     const newComment = {
       id: result.lastInsertRowid || Date.now(),
-      request_id: Number(id),
+      request_id: actualId,
       user_id: req.user?.id || 1,
       user_name: req.user?.name || 'Cosmopolitan User',
       user_role: req.user?.role || 'staff',
@@ -344,16 +408,19 @@ export async function addComment(req, res) {
 
 export async function rateResolution(req, res) {
   try {
-    const { id } = req.params;
-    const { rating, feedback } = req.body;
+    const actualId = await resolveRequestId(req.params.id);
+    if (!actualId) {
+      return res.status(404).json({ error: 'Maintenance request not found.' });
+    }
 
+    const { rating, feedback } = req.body;
     if (!rating || rating < 1 || rating > 5) {
       return res.status(400).json({ error: 'Rating must be an integer between 1 and 5.' });
     }
 
     await dbRun(
       `UPDATE maintenance_requests SET user_rating = ?, user_feedback = ?, status = 'closed', closed_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [rating, feedback || null, id]
+      [rating, feedback || null, actualId]
     );
 
     return res.json({ message: 'Thank you for your feedback! Request is now closed.' });
@@ -362,3 +429,4 @@ export async function rateResolution(req, res) {
     return res.status(500).json({ error: 'Failed to submit rating.' });
   }
 }
+

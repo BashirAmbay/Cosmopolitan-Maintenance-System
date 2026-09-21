@@ -4,8 +4,7 @@ import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.use(authenticateToken);
 router.get('/', getLocations);
-router.post('/', requireRole(['admin']), createLocation);
+router.post('/', authenticateToken, requireRole(['admin']), createLocation);
 
 export default router;

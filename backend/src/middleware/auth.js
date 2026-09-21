@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 
-export function authenticateToken(req, res, next) {
+export async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -10,6 +10,21 @@ export function authenticateToken(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'cosmopolitan_university_abuja_secret_key_2026');
+    
+    if (decoded.email) {
+      const { dbGet } = await import('../config/database.js');
+      const dbUser = await dbGet('SELECT * FROM users WHERE email = ?', [decoded.email.toLowerCase()]);
+      if (dbUser) {
+        req.user = {
+          ...decoded,
+          id: dbUser.id,
+          role: dbUser.role || decoded.role,
+          department_id: dbUser.department_id || decoded.department_id
+        };
+        return next();
+      }
+    }
+
     req.user = decoded;
     next();
   } catch (err) {

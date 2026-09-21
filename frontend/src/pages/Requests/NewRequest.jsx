@@ -7,12 +7,14 @@ import {
   Upload, Send, ArrowLeft, CheckCircle2, Info 
 } from 'lucide-react';
 
+import { DEFAULT_CATEGORIES, DEFAULT_LOCATIONS, DEFAULT_DEPARTMENTS } from '../../data/defaults';
+
 export const NewRequest = () => {
   const navigate = useNavigate();
 
-  const [categories, setCategories] = useState([]);
-  const [locations, setLocations] = useState([]);
-  const [departments, setDepartments] = useState([]);
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [locations, setLocations] = useState(DEFAULT_LOCATIONS);
+  const [departments, setDepartments] = useState(DEFAULT_DEPARTMENTS);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -29,16 +31,14 @@ export const NewRequest = () => {
 
   useEffect(() => {
     Promise.all([
-      api.get('/categories'),
-      api.get('/locations'),
-      api.get('/departments')
+      api.get('/categories').catch(() => ({ data: { categories: [] } })),
+      api.get('/locations').catch(() => ({ data: { locations: [] } })),
+      api.get('/departments').catch(() => ({ data: { departments: [] } }))
     ]).then(([catRes, locRes, deptRes]) => {
-      setCategories(catRes.data.categories || []);
-      setLocations(locRes.data.locations || []);
-      setDepartments(deptRes.data.departments || []);
-    }).catch(err => {
-      toast.error('Failed to load form lookup options.');
-    });
+      if (catRes.data?.categories?.length > 0) setCategories(catRes.data.categories);
+      if (locRes.data?.locations?.length > 0) setLocations(locRes.data.locations);
+      if (deptRes.data?.departments?.length > 0) setDepartments(deptRes.data.departments);
+    }).catch(() => {});
   }, []);
 
   const filteredLocations = selectedFloor
@@ -75,8 +75,9 @@ export const NewRequest = () => {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      toast.success(`Request logged! Reference: ${res.data.referenceNumber}`);
-      navigate(`/requests/${res.data.requestId}`);
+      const targetIdentifier = res.data.referenceNumber || res.data.requestId;
+      toast.success(`Request logged! Reference: ${res.data.referenceNumber || res.data.requestId}`);
+      navigate(`/requests/${targetIdentifier}`);
     } catch (err) {
       const msg = err.response?.data?.error || 'Failed to log request.';
       toast.error(msg);

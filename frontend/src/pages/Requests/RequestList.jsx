@@ -9,13 +9,15 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
+import { DEFAULT_CATEGORIES, DEFAULT_LOCATIONS } from '../../data/defaults';
+
 export const RequestList = ({ forceMyRequests = false }) => {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [requests, setRequests] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [locations, setLocations] = useState([]);
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [locations, setLocations] = useState(DEFAULT_LOCATIONS);
   const [loading, setLoading] = useState(true);
 
   const search = searchParams.get('search') || '';

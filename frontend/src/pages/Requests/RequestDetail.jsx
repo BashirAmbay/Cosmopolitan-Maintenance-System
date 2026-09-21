@@ -142,7 +142,7 @@ export const RequestDetail = () => {
     }
   };
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <div className="p-12 text-center text-slate-500 space-y-3">
         <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-900" />
@@ -151,11 +151,38 @@ export const RequestDetail = () => {
     );
   }
 
-  const { request, comments, attachments, history } = data;
+  if (!data?.request) {
+    return (
+      <div className="p-12 text-center space-y-4 max-w-md mx-auto">
+        <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600 border border-amber-200">
+          <AlertTriangle className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-black text-slate-800">Request Not Found</h3>
+        <p className="text-xs text-slate-500">The maintenance request #{id} was not found or could not be loaded.</p>
+        <div className="flex justify-center gap-3 pt-2">
+          <button
+            onClick={() => navigate('/requests')}
+            className="px-5 py-2.5 rounded-xl uni-banner text-white text-xs font-bold uppercase tracking-wider shadow-sm"
+          >
+            View All Requests
+          </button>
+          <button
+            onClick={() => navigate('/requests/new')}
+            className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold uppercase tracking-wider"
+          >
+            Submit New Request
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-  const canAssign = user.role === 'admin' || user.role === 'management';
-  const canUpdateStatus = user.role === 'admin' || user.role === 'management' || (user.role === 'technician' && request.assigned_to_id === user.id);
-  const canRate = (user.role === 'student' || user.role === 'staff' || user.id === request.reported_by_id) && request.status === 'resolved';
+  const { request, comments = [], attachments = [], history = [] } = data;
+
+  const userRole = user?.role || 'student';
+  const canAssign = userRole === 'admin' || userRole === 'management';
+  const canUpdateStatus = userRole === 'admin' || userRole === 'management' || (userRole === 'technician' && request.assigned_to_id === user?.id);
+  const canRate = (userRole === 'student' || userRole === 'staff' || user?.id === request.reported_by_id) && request.status === 'resolved';
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">

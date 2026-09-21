@@ -55,6 +55,7 @@ export default function App() {
       <Route element={<ProtectedLayout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/new-request" element={<NewRequest />} />
+        <Route path="/requests/new" element={<NewRequest />} />
         <Route path="/my-requests" element={<RequestList forceMyRequests={true} />} />
         <Route path="/tasks" element={<RequestList forceMyRequests={true} />} />
         <Route path="/requests" element={<RequestList forceMyRequests={false} />} />
