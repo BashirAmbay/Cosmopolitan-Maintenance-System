@@ -1,6 +1,6 @@
 import { dbAll, dbGet, dbRun } from '../config/database.js';
 import { z } from 'zod';
-import { sendNotificationEmail } from '../services/emailService.js';
+import { sendNotificationEmail, sendTechnicianAssignmentEmail } from '../services/emailService.js';
 import { logAudit } from '../services/auditService.js';
 
 async function generateReferenceNumber() {
@@ -309,7 +309,7 @@ export async function assignTechnician(req, res) {
     }
 
     const techId = Number(technician_id);
-    const tech = await dbGet('SELECT id, name FROM users WHERE id = ?', [techId]);
+    const tech = await dbGet('SELECT id, name, email FROM users WHERE id = ?', [techId]);
     const techName = tech?.name || 'Assigned Technician';
 
     await dbRun(
@@ -323,6 +323,77 @@ export async function assignTechnician(req, res) {
         [actualId, techId, req.user?.id || 1, notes || 'Assigned from dashboard.']
       );
     } catch (e) {}
+
+    try {
+      await dbRun(
+        `INSERT INTO status_history (request_id, old_status, new_status, changed_by_id, remarks) VALUES (?, 'pending', 'assigned', ?, ?)`,
+        [actualId, req.user?.id || 1, `Assigned to ${techName}. ${notes || ''}`.trim()]
+      );
+    } catch (e) {}
+
+    // Fetch full request details for notification
+    const reqDetails = await dbGet(`
+      SELECT 
+        r.*,
+        c.name as category_name,
+        l.name as location_name, l.building as location_building, l.floor as location_floor, l.room_number as location_room,
+        reporter.name as reporter_name, reporter.email as reporter_email
+      FROM maintenance_requests r
+      LEFT JOIN categories c ON r.category_id = c.id
+      LEFT JOIN locations l ON r.location_id = l.id
+      LEFT JOIN users reporter ON r.reported_by_id = reporter.id
+      WHERE r.id = ?
+    `, [actualId]);
+
+    // Send in-app notification to technician
+    try {
+      await dbRun(
+        `INSERT INTO notifications (user_id, title, message, link) VALUES (?, ?, ?, ?)`,
+        [
+          techId,
+          `New Task Assigned: ${reqDetails?.reference_number || 'Work Order'}`,
+          `You have been assigned to maintenance issue: "${reqDetails?.title || 'Issue'}". Location: ${reqDetails?.location_name || 'Campus'}.`,
+          `/requests/${reqDetails?.reference_number || actualId}`
+        ]
+      );
+    } catch (e) {}
+
+    // Send email notification to technician's email
+    if (tech?.email) {
+      const locationStr = [reqDetails?.location_name, reqDetails?.location_floor, reqDetails?.location_room]
+        .filter(Boolean)
+        .join(' - ');
+
+      const clientUrl = process.env.CLIENT_URL || 'https://cosmopolitan-maintenance.vercel.app';
+      const actionUrl = `${clientUrl.replace(/\/+$/, '')}/requests/${reqDetails?.reference_number || actualId}`;
+
+      sendTechnicianAssignmentEmail({
+        to: tech.email,
+        technicianName: tech.name,
+        assignedByName: req.user?.name || 'Administrator',
+        requestRef: reqDetails?.reference_number || `CUA-${actualId}`,
+        title: reqDetails?.title || 'Maintenance Work Order',
+        priority: reqDetails?.priority || 'medium',
+        category: reqDetails?.category_name || 'General Maintenance',
+        location: locationStr || 'Cosmopolitan Campus Premises',
+        description: reqDetails?.description || '',
+        notes: notes || '',
+        actionUrl
+      }).catch(err => {
+        console.error('[RequestController] Failed to send technician assignment email:', err.message);
+      });
+    }
+
+    try {
+      logAudit({
+        userId: req.user?.id || 1,
+        action: 'REQUEST_ASSIGNED',
+        entityType: 'REQUEST',
+        entityId: actualId,
+        details: `Assigned request ${reqDetails?.reference_number || actualId} to ${techName} (${tech?.email})`,
+        ipAddress: req.ip
+      });
+    } catch (auditErr) {}
 
     return res.json({ message: 'Technician assigned successfully.', assignedTo: techName });
   } catch (error) {

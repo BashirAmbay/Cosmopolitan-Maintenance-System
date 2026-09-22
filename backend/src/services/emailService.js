@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import nodemailer from 'nodemailer';
 
 // Helper to construct SMTP (App Password), OAuth2 or fallback transporter
@@ -347,5 +348,168 @@ export async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinu
     return null;
   }
 }
+
+/**
+ * Send Work Order / Assignment Notification Email to Technician
+ */
+export async function sendTechnicianAssignmentEmail({
+  to,
+  technicianName,
+  assignedByName,
+  requestRef,
+  title,
+  priority,
+  category,
+  location,
+  description,
+  notes,
+  actionUrl
+}) {
+  try {
+    const transporter = createTransporter();
+    const senderEmail = process.env.EMAIL_USER || 'operations@cosmopolitan.edu.ng';
+    const clientUrl = process.env.CLIENT_URL || 'https://cosmopolitan-maintenance.vercel.app';
+    const finalUrl = actionUrl || `${clientUrl}/requests/${requestRef}`;
+
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-GB', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+    const formattedTime = now.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const priorityColors = {
+      urgent: { bg: '#fee2e2', text: '#991b1b', border: '#ef4444' },
+      high: { bg: '#ffedd5', text: '#9a3412', border: '#f97316' },
+      medium: { bg: '#fef3c7', text: '#92400e', border: '#f59e0b' },
+      low: { bg: '#dcfce7', text: '#166534', border: '#22c55e' }
+    };
+    const pStyle = priorityColors[priority?.toLowerCase()] || priorityColors.medium;
+
+    const htmlContent = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; padding: 32px 16px; color: #1e293b;">
+        <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.07), 0 4px 6px -4px rgba(0,0,0,0.05);">
+          
+          <!-- Header Banner -->
+          <div style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); padding: 28px 24px; text-align: center; border-bottom: 4px solid #3b82f6;">
+            <div style="display: inline-block; background: rgba(255,255,255,0.1); padding: 6px 14px; border-radius: 20px; margin-bottom: 8px;">
+              <span style="color: #60a5fa; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">New Work Order Assignment</span>
+            </div>
+            <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px;">
+              COSMOPOLITAN UNIVERSITY
+            </h1>
+            <p style="color: #94a3b8; margin: 6px 0 0 0; font-size: 13px; font-weight: 500;">
+              Operations & Maintenance Management Portal
+            </p>
+          </div>
+
+          <!-- Body Content -->
+          <div style="padding: 28px 24px;">
+            <div style="text-align: center; margin-bottom: 20px;">
+              <div style="display: inline-block; width: 48px; height: 48px; line-height: 48px; border-radius: 50%; background-color: #dbeafe; color: #1d4ed8; font-size: 22px; text-align: center;">
+                🛠️
+              </div>
+              <h2 style="color: #0f172a; margin: 12px 0 4px 0; font-size: 19px; font-weight: 700;">
+                You Have Been Assigned a Task
+              </h2>
+              <p style="color: #64748b; margin: 0; font-size: 14px;">
+                Hello <strong style="color: #0f172a;">${technicianName || 'Technician'}</strong>, an administrator has assigned a new maintenance issue to you.
+              </p>
+            </div>
+
+            <!-- Task Details Card -->
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin: 20px 0;">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 12px;">
+                <span style="font-size: 12px; color: #64748b; font-weight: 600;">Work Order Ref:</span>
+                <span style="font-family: monospace; font-weight: 800; color: #1e40af; font-size: 14px; background: #e0f2fe; padding: 2px 8px; border-radius: 4px;">${requestRef}</span>
+              </div>
+              
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b; font-weight: 600; width: 120px;">Issue Title:</td>
+                  <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${title}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Category:</td>
+                  <td style="padding: 6px 0; color: #0f172a;">${category || 'General Maintenance'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Location:</td>
+                  <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">📍 ${location || 'Campus Premises'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Priority:</td>
+                  <td style="padding: 6px 0;">
+                    <span style="background-color: ${pStyle.bg}; color: ${pStyle.text}; border: 1px solid ${pStyle.border}; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase;">
+                      ${priority || 'MEDIUM'}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Assigned By:</td>
+                  <td style="padding: 6px 0; color: #0f172a;">${assignedByName || 'Administrator'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Date Assigned:</td>
+                  <td style="padding: 6px 0; color: #0f172a;">${formattedDate} at ${formattedTime}</td>
+                </tr>
+              </table>
+
+              ${description ? `
+                <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
+                  <div style="font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 4px;">Issue Description:</div>
+                  <div style="font-size: 13px; color: #334155; line-height: 1.5; background: #ffffff; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                    ${description}
+                  </div>
+                </div>
+              ` : ''}
+
+              ${notes ? `
+                <div style="margin-top: 10px;">
+                  <div style="font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 4px;">Admin Instructions / Notes:</div>
+                  <div style="font-size: 13px; color: #1e3a8a; line-height: 1.5; background: #eff6ff; padding: 10px; border-radius: 6px; border: 1px solid #bfdbfe;">
+                    ${notes}
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+
+            <!-- Action Button -->
+            <div style="text-align: center; margin-top: 24px;">
+              <a href="${finalUrl}" style="background-color: #1e40af; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 14px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(30,64,175,0.25);">
+                View Work Order & Update Status
+              </a>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; line-height: 1.5;">
+            <p style="margin: 0;">This is an automated operational dispatch from Cosmopolitan University Abuja O&M System.</p>
+            <p style="margin: 3px 0 0 0;">Central Campus, Airport Road, Abuja, Nigeria</p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const info = await transporter.sendMail({
+      from: `"Cosmopolitan University O&M" <${senderEmail}>`,
+      to,
+      subject: `[Work Order Assigned] ${requestRef}: ${title}`,
+      html: htmlContent
+    });
+
+    console.log(`[EmailService] Technician assignment email sent successfully to ${to} (MessageId: ${info?.messageId})`);
+    return info;
+  } catch (error) {
+    console.error(`[EmailService] Failed to send technician assignment email to ${to}:`, error.message);
+    return null;
+  }
+}
+
 
 

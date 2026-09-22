@@ -19,11 +19,11 @@ export async function seedDatabase() {
     { name: 'Estates & Facilities Management', code: 'ESTM', head_name: 'Arch. Suleiman Garba', description: 'Physical Planning & Maintenance Unit' },
   ];
 
-  for (const d of departments) {
-    await dbRun('INSERT OR IGNORE INTO departments (name, code, description, head_name) VALUES (?, ?, ?, ?)', [
+  await Promise.allSettled(departments.map(d =>
+    dbRun('INSERT OR IGNORE INTO departments (name, code, description, head_name) VALUES (?, ?, ?, ?)', [
       d.name, d.code, d.description, d.head_name
-    ]);
-  }
+    ])
+  ));
 
   // 2. Real Campus Locations (Floors & Room Numbers)
   const locations = [
@@ -105,11 +105,11 @@ export async function seedDatabase() {
     { name: 'Room P.11', building: 'Cosmopolitan Campus Building', floor: 'Penthouse Floor (PF)', room_number: 'P.11', description: 'Penthouse Floor - Room P.11' },
   ];
 
-  for (const l of locations) {
-    await dbRun('INSERT OR IGNORE INTO locations (name, building, floor, room_number, description) VALUES (?, ?, ?, ?, ?)', [
+  await Promise.allSettled(locations.map(l =>
+    dbRun('INSERT OR IGNORE INTO locations (name, building, floor, room_number, description) VALUES (?, ?, ?, ?, ?)', [
       l.name, l.building, l.floor, l.room_number, l.description
-    ]);
-  }
+    ])
+  ));
 
   // 3. Categories
   const categories = [
@@ -123,11 +123,11 @@ export async function seedDatabase() {
     { name: 'Security, Locks & Doors', description: 'Door locks, access control keycards, window latches, CCTV', icon: 'lock', sla_hours: 4 },
   ];
 
-  for (const c of categories) {
-    await dbRun('INSERT OR IGNORE INTO categories (name, description, icon, sla_hours) VALUES (?, ?, ?, ?)', [
+  await Promise.allSettled(categories.map(c =>
+    dbRun('INSERT OR IGNORE INTO categories (name, description, icon, sla_hours) VALUES (?, ?, ?, ?)', [
       c.name, c.description, c.icon, c.sla_hours
-    ]);
-  }
+    ])
+  ));
 
   // 4. Official System Users
   const passwordHash = await bcrypt.hash('password123', 10);
@@ -140,11 +140,11 @@ export async function seedDatabase() {
     { name: 'Emeka Okafor (Plumber)', email: 'emeka.okafor@cosmopolitan.edu.ng', role: 'technician', department_id: 8, phone: '+234 804 567 8901', specialization: 'Plumbing & Water Supply' },
   ];
 
-  for (const u of users) {
-    await dbRun('INSERT OR IGNORE INTO users (name, email, password_hash, role, department_id, phone, specialization) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+  await Promise.allSettled(users.map(u =>
+    dbRun('INSERT OR IGNORE INTO users (name, email, password_hash, role, department_id, phone, specialization) VALUES (?, ?, ?, ?, ?, ?, ?)', [
       u.name, u.email, passwordHash, u.role, u.department_id, u.phone, u.specialization
-    ]);
-  }
+    ])
+  ));
 
   console.log('Database initialization check complete!');
 }

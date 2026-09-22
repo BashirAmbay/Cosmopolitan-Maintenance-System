@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -10,7 +11,6 @@ const isVercel = Boolean(process.env.VERCEL || process.env.NOW_BUILDER);
 const tursoUrl = process.env.TURSO_DATABASE_URL;
 const tursoToken = process.env.TURSO_AUTH_TOKEN;
 
-let db = null;
 let libsqlClient = null;
 let localClient = null;
 
@@ -27,7 +27,7 @@ if (tursoUrl) {
   }
 }
 
-// Always initialize local file database engine
+// Initialize local file database engine
 const dbDir = path.join(__dirname, '../../data');
 const dbPath = isVercel
   ? path.join('/tmp', 'database.sqlite')
@@ -40,16 +40,12 @@ if (!isVercel && !fs.existsSync(dbDir)) {
 const fileUrl = isVercel
   ? 'file:/tmp/database.sqlite'
   : `file:${dbPath.replace(/\\/g, '/')}`;
-try {
-  localClient = createClient({ url: fileUrl });
-} catch (e) {}
 
 try {
-  const { default: Database } = await import('better-sqlite3');
-  db = new Database(dbPath);
-  try { db.pragma('journal_mode = WAL'); } catch (e) {}
-  db.pragma('foreign_keys = ON');
-} catch (err) {}
+  localClient = createClient({ url: fileUrl });
+} catch (e) {
+  console.error('Failed to initialize local database client:', e.message);
+}
 
 // ─── Async query helpers (always works with both local sqlite and Turso) ──────
 
@@ -82,12 +78,6 @@ export async function dbAll(sql, args = []) {
         res.columns.forEach((col, i) => { obj[col] = row[i]; });
         return obj;
       });
-    } catch (e) {}
-  }
-  if (db) {
-    try {
-      const stmt = db.prepare(sql);
-      return stmt.all(...args) || [];
     } catch (e) {
       return [];
     }
@@ -122,12 +112,6 @@ export async function dbGet(sql, args = []) {
       const obj = {};
       res.columns.forEach((col, i) => { obj[col] = row[i]; });
       return obj;
-    } catch (e) {}
-  }
-  if (db) {
-    try {
-      const stmt = db.prepare(sql);
-      return stmt.get(...args) || null;
     } catch (e) {
       return null;
     }
@@ -159,15 +143,6 @@ export async function dbRun(sql, args = []) {
       return { changes: 0, lastInsertRowid: 0 };
     }
   }
-  if (db) {
-    try {
-      const stmt = db.prepare(sql);
-      const result = stmt.run(...args);
-      return { changes: result.changes || 0, lastInsertRowid: Number(result.lastInsertRowid || 0) };
-    } catch (e) {
-      return { changes: 0, lastInsertRowid: 0 };
-    }
-  }
   return { changes: 0, lastInsertRowid: 0 };
 }
 
@@ -192,37 +167,7 @@ export async function dbExec(sql) {
       }
     } catch (e) {}
   }
-  if (db) {
-    try { db.exec(sql); } catch (e) {}
-  }
 }
 
-
-// Legacy synchronous interface (kept for backward compat with local sqlite only)
-const unifiedDb = {
-  prepare: (sql) => {
-    if (db) {
-      const stmt = db.prepare(sql);
-      return {
-        get: (...params) => stmt.get(...params),
-        all: (...params) => stmt.all(...params),
-        run: (...params) => stmt.run(...params)
-      };
-    }
-    // For Turso: return async stubs that log a warning
-    return {
-      get: () => { console.warn('Sync .get() called on Turso client — use dbGet() instead'); return null; },
-      all: () => { console.warn('Sync .all() called on Turso client — use dbAll() instead'); return []; },
-      run: () => { console.warn('Sync .run() called on Turso client — use dbRun() instead'); return { changes: 0, lastInsertRowid: 0 }; }
-    };
-  },
-  exec: (sql) => {
-    if (db) { try { return db.exec(sql); } catch (e) {} }
-  },
-  pragma: (sql) => {
-    if (db) { try { db.pragma(sql); } catch (e) {} }
-  }
-};
-
-export default unifiedDb;
+export default { dbAll, dbGet, dbRun, dbExec };
 export { libsqlClient };

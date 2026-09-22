@@ -130,13 +130,7 @@ export async function initDatabaseSchema() {
   ];
 
 
-  for (const sql of tables) {
-    try {
-      await dbExec(sql);
-    } catch (e) {
-      // Ignore "table already exists" errors
-    }
-  }
+  await Promise.allSettled(tables.map(sql => dbExec(sql)));
 
   console.log('Database schema initialized successfully.');
 }

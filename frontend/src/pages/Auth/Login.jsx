@@ -105,35 +105,7 @@ export const Login = () => {
     }
   };
 
-  const handleSelectQuickRole = (presetEmail) => {
-    if (!isCosmopolitanEmail(presetEmail)) {
-      const msg = 'This email is not a Cosmopolitan email, please login with your Cosmopolitan email.';
-      setErrorMsg(msg);
-      toast.error(msg);
-      return;
-    }
 
-    setEmail(presetEmail);
-    setPassword('password123');
-    setStep(2);
-    setErrorMsg('');
-    setResetSuccessMsg('');
-  };
-
-  const handleSelectPortalCategory = (portalLabel) => {
-    setEmail('');
-    setPassword('');
-    setStep(1);
-    setErrorMsg('');
-    setResetSuccessMsg('');
-    toast.success(`Enter your registered ${portalLabel} email to log in.`);
-  };
-
-  const quickRoles = [
-    { label: 'Student', icon: GraduationCap, color: 'text-emerald-800 bg-emerald-50 border-emerald-200 hover:bg-emerald-100' },
-    { label: 'Staff / Faculty', icon: UserCheck, color: 'text-purple-800 bg-purple-50 border-purple-200 hover:bg-purple-100' },
-    { label: 'Technician', icon: Wrench, color: 'text-amber-900 bg-amber-50 border-amber-200 hover:bg-amber-100' }
-  ];
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
@@ -421,70 +393,12 @@ export const Login = () => {
             </div>
           )}
 
-          {/* Single-Click User Portals: Student, Staff/Faculty, Technician */}
-          <div className="pt-6 border-t border-slate-200 space-y-4">
-            <div>
-              <span className="block text-center text-[11px] font-extrabold text-slate-500 uppercase tracking-wider mb-2.5 flex items-center justify-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> SELECT USER PORTAL
-              </span>
-              <div className="grid grid-cols-3 gap-2">
-                {quickRoles.map((r) => {
-                  const Icon = r.icon;
-                  return (
-                    <button
-                      key={r.label}
-                      type="button"
-                      onClick={() => handleSelectPortalCategory(r.label)}
-                      disabled={loading}
-                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition-all ${r.color}`}
-                    >
-                      <Icon className="w-5 h-5 mb-1" />
-                      <span className="text-xs font-extrabold truncate w-full">{r.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Official Admin & VC Management Credentials Access Card */}
-            <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-3 border border-slate-800 shadow-md">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-400">
-                  <Shield className="w-4 h-4 text-amber-400" /> Admin & VC Management Login
-                </div>
-                <span className="text-[10px] font-extrabold bg-blue-950 text-blue-300 px-2.5 py-0.5 rounded-full border border-blue-800 uppercase">
-                  SYSTEM PORTALS
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => handleSelectPortalCategory('Admin Operations')}
-                  disabled={loading}
-                  className="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-center transition-all group"
-                >
-                  <span className="font-extrabold text-blue-400 block group-hover:text-amber-300 text-xs">🛡️ Admin Operations</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleSelectPortalCategory('VC Management')}
-                  disabled={loading}
-                  className="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-center transition-all group"
-                >
-                  <span className="font-extrabold text-purple-400 block group-hover:text-amber-300 text-xs">🏛️ VC Management</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Register New Account Link */}
-            <div className="text-center pt-2 border-t border-slate-100">
-              <span className="text-xs text-slate-600 font-medium">Need a portal account? </span>
-              <Link to="/register" className="text-xs font-extrabold text-blue-900 hover:underline inline-flex items-center gap-1">
-                <UserPlus className="w-3.5 h-3.5" /> Register New Account
-              </Link>
-            </div>
+          {/* Register New Account Link */}
+          <div className="text-center pt-4 border-t border-slate-100">
+            <span className="text-xs text-slate-600 font-medium">Need a portal account? </span>
+            <Link to="/register" className="text-xs font-extrabold text-blue-900 hover:underline inline-flex items-center gap-1">
+              <UserPlus className="w-3.5 h-3.5" /> Register New Account
+            </Link>
           </div>
 
         </div>
